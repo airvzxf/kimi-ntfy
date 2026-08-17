@@ -1,0 +1,60 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build and publish tarball
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # actions/checkout v4.4.0
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag signature
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -e
+          if ! git verify-tag "$GITHUB_REF_NAME"; then
+            echo "::error::Tag $GITHUB_REF_NAME is not signed by a trusted key."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run validation gauntlet
+        run: npm run validate
+
+      - name: Build tarball
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          tar --exclude='./.git' \
+              --exclude='./.github' \
+              --exclude='./node_modules' \
+              --exclude='./tests' \
+              --exclude='./coverage' \
+              -czf "kimi-ntfy-${GITHUB_REF_NAME}.tar.gz" \
+              --transform="s-^./-kimi-ntfy/-" \
+              .
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: kimi-ntfy-${{ github.ref_name }}.tar.gz
+          generate_release_notes: true

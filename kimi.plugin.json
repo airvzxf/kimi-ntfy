@@ -1,0 +1,50 @@
+{
+  "name": "kimi-ntfy",
+  "version": "0.3.0",
+  "description": "Push notifications via ntfy.sh when a Kimi Code session, turn or sub-agent ends. English by default; Spanish optional. Self-hosted server supported.",
+  "keywords": ["notification", "ntfy", "push", "hook", "i18n"],
+  "author": "Israel Roldan",
+  "license": "AGPL-3.0",
+  "interface": {
+    "displayName": "Kimi → ntfy",
+    "shortDescription": "ntfy.sh push notifications on session/turn end. English with Spanish.",
+    "longDescription": "Sends an ntfy.sh push when the agent ends a turn, fails a turn, closes the session, or finishes a sub-agent (toggle). Supports ntfy.sh and self-hosted servers.",
+    "developerName": "Kimi ntfy plugin",
+    "websiteURL": "https://github.com/airvzxf/kimi-ntfy"
+  },
+  "skills": "./skills/",
+  "commands": [
+    "./commands/setup.md",
+    "./commands/test.md",
+    "./commands/status.md",
+    "./commands/lang.md",
+    "./commands/server.md",
+    "./commands/subagents.md"
+  ],
+  "hooks": [
+    {
+      "event": "Stop",
+      "matcher": "",
+      "command": "node ./bin/notify.mjs",
+      "timeout": 5
+    },
+    {
+      "event": "StopFailure",
+      "matcher": "",
+      "command": "node ./bin/notify.mjs",
+      "timeout": 5
+    },
+    {
+      "event": "SessionEnd",
+      "matcher": "",
+      "command": "node ./bin/notify.mjs",
+      "timeout": 5
+    },
+    {
+      "event": "SubagentStop",
+      "matcher": "",
+      "command": "node ./bin/notify.mjs",
+      "timeout": 5
+    }
+  ]
+}

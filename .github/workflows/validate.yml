@@ -1,0 +1,28 @@
+name: validate
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+jobs:
+  validate:
+    name: Lint, check, test
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v4.4.0
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run validation gauntlet
+        run: npm run validate
