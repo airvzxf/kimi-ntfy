@@ -67,7 +67,7 @@ jobs:
               --exclude='./tests' \
               --exclude='./coverage' \
               -czf "kimi-ntfy-${GITHUB_REF_NAME}.tar.gz" \
-              --transform="s-^./-kimi-ntfy/-" \
+              --transform='s,^\./,kimi-ntfy/,' \
               .
 
       - name: Create GitHub release
