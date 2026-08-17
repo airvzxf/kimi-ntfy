@@ -186,6 +186,38 @@ test('cli subagents on|off toggles the flag; rejects anything else', async () =>
   }
 });
 
+test('cli priority accepts the five ntfy names and aliases; rejects others', async () => {
+  const home = await tmpHome('pri');
+  try {
+    await seed(home, { topic: 't' });
+    for (const name of ['min', 'low', 'default', 'high', 'urgent']) {
+      const r = await runCli(home, 'priority', name);
+      assert.equal(r.status, 0, `unexpected exit for ${name}, stderr=${r.stderr}`);
+      assert.equal((await readConfig(home)).priority, name);
+    }
+    // Aliases resolve and are stored normalized to the canonical key.
+    const silent = await runCli(home, 'priority', 'silent');
+    assert.equal(silent.status, 0);
+    assert.equal((await readConfig(home)).priority, 'silent');
+    const normal = await runCli(home, 'priority', 'normal');
+    assert.equal(normal.status, 0);
+    assert.equal((await readConfig(home)).priority, 'normal');
+    const critical = await runCli(home, 'priority', 'critical');
+    assert.equal(critical.status, 0);
+    assert.equal((await readConfig(home)).priority, 'critical');
+    const upper = await runCli(home, 'priority', 'HIGH');
+    assert.equal(upper.status, 0);
+    assert.equal((await readConfig(home)).priority, 'high');
+    const bad = await runCli(home, 'priority', 'loud');
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /priority/i);
+    const none = await runCli(home, 'priority');
+    assert.equal(none.status, 2);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('cli test posts to the configured server', async () => {
   const mock = await start();
   const home = await tmpHome('test-ok');

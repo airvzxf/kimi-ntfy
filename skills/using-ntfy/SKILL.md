@@ -42,6 +42,7 @@ every message posted to it.
 | `/kimi-ntfy:lang <en\|es>` | Notification copy and CLI messages language; default `en` |
 | `/kimi-ntfy:server <url> [token]` | Change the ntfy server without rewriting the topic; pass an empty token string to clear it |
 | `/kimi-ntfy:subagents <on\|off>` | Toggle push notifications for `SubagentStop` events; default `off` |
+| `/kimi-ntfy:priority <level>` | Override the ntfy priority for every event (`min`, `low`, `default`, `high`, `urgent`; aliases `silent`, `normal`, `max`, `critical`). |
 
 Config lives at `~/.kimi-code/kimi-ntfy-config.json` (or `$KIMI_CODE_HOME`).
 The CLI sets file mode `0600`.

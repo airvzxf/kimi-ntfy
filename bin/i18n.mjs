@@ -17,6 +17,8 @@ export const STRINGS = {
     serverChanged: 'Server set to',
     subagentsOn: 'sub-agent notifications enabled',
     subagentsOff: 'sub-agent notifications disabled',
+    priorityChanged: 'Priority set to',
+    priorityInvalid: 'invalid priority (use "min", "low", "default", "high", or "urgent")',
     configCurrent: 'Current config:',
     topicUrl: 'Topic URL:',
     ntfyResponded: 'ntfy responded',
@@ -76,6 +78,8 @@ export const STRINGS = {
     serverChanged: 'Servidor cambiado a',
     subagentsOn: 'notificaciones de sub-agentes activadas',
     subagentsOff: 'notificaciones de sub-agentes desactivadas',
+    priorityChanged: 'Prioridad cambiada a',
+    priorityInvalid: 'prioridad inválida (use "min", "low", "default", "high" o "urgent")',
     configCurrent: 'Config actual:',
     topicUrl: 'URL del topic:',
     ntfyResponded: 'ntfy respondió',
@@ -124,6 +128,30 @@ export const STRINGS = {
 };
 
 export const SUPPORTED_LANGS = ['en', 'es'];
+
+// ntfy priority levels. The friendly names match the values documented at
+// https://docs.ntfy.sh/publish/#message-priority. Aliases (`silent` -> min,
+// `normal` -> default, `max`/`critical` -> urgent) are accepted by the CLI
+// and slash command for ergonomics.
+export const PRIORITY_LEVELS = {
+  min: 1,
+  low: 2,
+  default: 3,
+  high: 4,
+  urgent: 5,
+  // Aliases
+  silent: 1,
+  normal: 3,
+  max: 5,
+  critical: 5,
+};
+
+export const PRIORITY_NAMES = Object.keys(PRIORITY_LEVELS);
+
+export function resolvePriority(level) {
+  if (typeof level !== 'string') return null;
+  return PRIORITY_LEVELS[level.toLowerCase()] ?? null;
+}
 
 export function t(lang) {
   return STRINGS[lang] || STRINGS.en;

@@ -223,3 +223,51 @@ test('Spanish notifications include Spanish text in the body', async () => {
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test('priority override in config wins over the per-event default', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    // StopFailure default is 4. Force it to 1 (min/silent) and verify.
+    await seed(home, { topic: 'mytopic', server: mock.url, priority: 'min' });
+    const r = await runNotify(home, JSON.stringify(payloads.stopFailure));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    assert.equal(mock.records[0].headers.priority, '1');
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('priority override accepts aliases and uppercase', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    // 'URGENT' should be normalized to priority 5.
+    await seed(home, { topic: 'mytopic', server: mock.url, priority: 'URGENT' });
+    const r = await runNotify(home, JSON.stringify(payloads.stop));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    assert.equal(mock.records[0].headers.priority, '5');
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('invalid priority in config is silently ignored (per-event default applies)', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url, priority: 'loud' });
+    const r = await runNotify(home, JSON.stringify(payloads.stop));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    // Stop default is 3 — typo must not stop notifications.
+    assert.equal(mock.records[0].headers.priority, '3');
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});

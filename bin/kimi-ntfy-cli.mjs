@@ -5,7 +5,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { SUPPORTED_LANGS, t } from './i18n.mjs';
+import { PRIORITY_LEVELS, SUPPORTED_LANGS, resolvePriority, t } from './i18n.mjs';
 
 const HOME = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
 const CONFIG_PATH = join(HOME, 'kimi-ntfy-config.json');
@@ -42,6 +42,7 @@ ${s.helpUsage || 'Usage:'}
   kimi-ntfy-cli lang <en|es>
   kimi-ntfy-cli server <url> [token]
   kimi-ntfy-cli subagents <on|off>
+  kimi-ntfy-cli priority <min|low|default|high|urgent>
   kimi-ntfy-cli test [message]
   kimi-ntfy-cli status
   kimi-ntfy-cli path
@@ -120,6 +121,21 @@ async function cmdSubagents([onoff]) {
   console.log(JSON.stringify({ ...cfg }, null, 2));
 }
 
+async function cmdPriority([level]) {
+  const lang = await currentLang();
+  const s = t(lang);
+  if (resolvePriority(level) === null) {
+    console.error(`Error: ${s.priorityInvalid}`);
+    process.exit(2);
+  }
+  const normalized = level.toLowerCase();
+  const cfg = await loadConfig();
+  cfg.priority = normalized;
+  await saveConfig(cfg);
+  console.log(`${s.priorityChanged} ${normalized} (=${PRIORITY_LEVELS[normalized]})`);
+  console.log(JSON.stringify({ ...cfg }, null, 2));
+}
+
 async function cmdTest([message]) {
   const cfg = await loadConfig();
   const lang = SUPPORTED_LANGS.includes(cfg.language) ? cfg.language : 'en';
@@ -165,6 +181,7 @@ const handlers = {
   lang: cmdLang,
   server: cmdServer,
   subagents: cmdSubagents,
+  priority: cmdPriority,
   test: cmdTest,
   status: cmdStatus,
   path: cmdPath,

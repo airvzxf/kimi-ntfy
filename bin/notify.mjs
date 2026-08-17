@@ -6,7 +6,7 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { SUPPORTED_LANGS, t } from './i18n.mjs';
+import { SUPPORTED_LANGS, resolvePriority, t } from './i18n.mjs';
 
 const HOME = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
 const CONFIG_PATH = join(HOME, 'kimi-ntfy-config.json');
@@ -118,6 +118,13 @@ async function main() {
   const note = buildNotification(event, payload, config);
   if (!note) {
     process.exit(0);
+  }
+
+  // A user-set priority overrides the per-event default. Invalid strings in
+  // the config are silently ignored so a typo never breaks the handler.
+  const overridePriority = resolvePriority(config.priority);
+  if (overridePriority !== null) {
+    note.priority = overridePriority;
   }
 
   const url = `${config.server || DEFAULT_SERVER}/${encodeURIComponent(config.topic)}`;

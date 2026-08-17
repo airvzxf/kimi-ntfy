@@ -24,7 +24,7 @@ Spanish optional.
 ## Install
 
 ```
-/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.3.0
+/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.4.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
@@ -44,6 +44,7 @@ the ntfy rules: letters, digits, `-` and `_`, max 64 characters.
 | `/kimi-ntfy:lang <en\|es>` | Switch notification strings between English and Spanish. |
 | `/kimi-ntfy:server <url> [token]` | Point the plugin at a different ntfy server. |
 | `/kimi-ntfy:subagents <on\|off>` | Toggle `SubagentStop` notifications (default off). |
+| `/kimi-ntfy:priority <level>` | Override the ntfy priority for every event (see [Priority levels](#priority-levels)). |
 
 ## Configuration
 
@@ -55,7 +56,8 @@ The plugin reads and writes `~/.kimi-code/kimi-ntfy-config.json` (mode `0600`):
   "server": "https://ntfy.sh",
   "token": "",
   "language": "en",
-  "notifySubagent": false
+  "notifySubagent": false,
+  "priority": "default"
 }
 ```
 
@@ -66,6 +68,41 @@ The plugin reads and writes `~/.kimi-code/kimi-ntfy-config.json` (mode `0600`):
 | `token` | empty | Bearer token sent as `Authorization: Bearer <token>`. |
 | `language` | `en` | Notification strings: `en` or `es`. |
 | `notifySubagent` | `false` | If `true`, fires on `SubagentStop` too. |
+| `priority` | (unset) | Optional ntfy priority override that wins over every per-event default. See [Priority levels](#priority-levels). |
+
+## Priority levels
+
+The plugin defaults to per-event priorities tuned for usefulness without
+being noisy:
+
+| Event | Default | Reasoning |
+|---|---|---|
+| `Stop` | `default` (3) | Sound + vibration — turn is done. |
+| `StopFailure` | `high` (4) | Long burst + pop-over — read the error. |
+| `SessionEnd` | `low` (2) | Silent — confirmed the session closed. |
+| `SubagentStop` | `min` (1) | Silent — only meaningful when `notifySubagent` is on. |
+
+Use `/kimi-ntfy:priority <level>` to override every event with one of the
+five ntfy levels (aliases in parentheses):
+
+| Level | Sound | Vibration | Do-Not-Disturb override |
+|---|---|---|---|
+| `min` (`silent`) | none | none | no |
+| `low` | none | none | no |
+| `default` (`normal`) | yes | yes | no |
+| `high` | long burst | yes | no |
+| `urgent` (`max`, `critical`) | yes | long | yes |
+
+Examples:
+
+```
+/kimi-ntfy:priority silent       # silence every notification
+/kimi-ntfy:priority urgent       # max-out everything (use sparingly)
+/kimi-ntfy:priority default      # back to per-event defaults
+```
+
+The override is stored as a string in `kimi-ntfy-config.json`. Delete the
+`priority` field to revert to per-event defaults.
 
 ## Self-host
 
@@ -179,7 +216,7 @@ por defecto, español opcional.
 ### Instalación
 
 ```
-/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.3.0
+/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.4.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
@@ -199,6 +236,7 @@ las reglas de ntfy: letras, números, `-` y `_`, máximo 64 caracteres.
 | `/kimi-ntfy:lang <en\|es>` | Cambia el idioma de las notificaciones. |
 | `/kimi-ntfy:server <url> [token]` | Apunta el plugin a otro servidor ntfy. |
 | `/kimi-ntfy:subagents <on\|off>` | Activa o desactiva las notificaciones de sub-agentes (default off). |
+| `/kimi-ntfy:priority <nivel>` | Sobrescribe la prioridad de ntfy para todos los eventos (`min`, `low`, `default`, `high`, `urgent`). |
 
 ### Configuración
 
