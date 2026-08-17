@@ -17,12 +17,30 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+          fetch-tags: true
+
+      - name: Import maintainer GPG key
+        env:
+          GPG_FINGERPRINT: 82DE44111B30F91F55BCEB1F414687A3CD7E65B9
+        run: |
+          set -e
+          # Pull the maintainer's public GPG keys from the GitHub API and
+          # import the one whose long keyid matches our expected fingerprint.
+          # This lets `git verify-tag` succeed on the runner.
+          curl -fsSL "https://api.github.com/users/airvzxf/gpg_keys" \
+            | jq -r '.[] | select(.key_id | ascii_downcase == ("414687A3CD7E65B9" | ascii_downcase)) | .raw_key' \
+            | gpg --import
+          gpg --list-keys "$GPG_FINGERPRINT"
 
       - name: Verify tag signature
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           set -e
+          # Force-fetch the tag explicitly so the annotated tag object is in
+          # the local object database (actions/checkout's defaults don't
+          # always include it).
+          git fetch origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           if ! git verify-tag "$GITHUB_REF_NAME"; then
             echo "::error::Tag $GITHUB_REF_NAME is not signed by a trusted key."
             exit 1
