@@ -1,0 +1,31 @@
+{
+  "stop": {
+    "hook_event_name": "Stop",
+    "session_id": "01HZTESTSTOP",
+    "session_title": "Fix login page",
+    "client_type": "kimi_code_cli",
+    "cwd": "/home/wolf/projects/app"
+  },
+  "stopFailure": {
+    "hook_event_name": "StopFailure",
+    "session_id": "01HZTESTFAIL",
+    "session_title": "Fix login page",
+    "client_type": "kimi_code_cli",
+    "cwd": "/home/wolf/projects/app"
+  },
+  "sessionEnd": {
+    "hook_event_name": "SessionEnd",
+    "session_id": "01HZTESTSESSIONEND",
+    "session_title": "Fix login page",
+    "client_type": "kimi_code_cli",
+    "cwd": "/home/wolf/projects/app"
+  },
+  "subagentStop": {
+    "hook_event_name": "SubagentStop",
+    "session_id": "01HZTESTSUBAGENT",
+    "session_title": "Fix login page",
+    "client_type": "kimi_code_cli",
+    "cwd": "/home/wolf/projects/app",
+    "agent_name": "explore"
+  }
+}
