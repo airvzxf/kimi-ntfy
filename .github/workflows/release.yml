@@ -40,7 +40,7 @@ jobs:
           # Force-fetch the tag explicitly so the annotated tag object is in
           # the local object database (actions/checkout's defaults don't
           # always include it).
-          git fetch origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           if ! git verify-tag "$GITHUB_REF_NAME"; then
             echo "::error::Tag $GITHUB_REF_NAME is not signed by a trusted key."
             exit 1
