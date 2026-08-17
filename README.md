@@ -24,7 +24,7 @@ Spanish optional.
 ## Install
 
 ```
-/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.4.0
+/plugins install https://github.com/airvzxf/kimi-ntfy/releases/tag/v0.4.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
@@ -216,7 +216,7 @@ por defecto, español opcional.
 ### Instalación
 
 ```
-/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.4.0
+/plugins install https://github.com/airvzxf/kimi-ntfy/releases/tag/v0.4.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test

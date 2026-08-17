@@ -2,6 +2,15 @@
 
 All notable changes to kimi-ntfy are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- Install command in README was using the SSH form (`git@github.com:...`),
+  which Kimi Code's `/plugins install` interprets as a local path and
+  errors with `Plugin root does not exist`. Switched to the documented
+  HTTPS form `https://github.com/airvzxf/kimi-ntfy/releases/tag/<version>`.
+  Applies to both the English and Spanish install snippets.
+
 ## [0.4.0] - 2026-08-17
 
 ### Added
