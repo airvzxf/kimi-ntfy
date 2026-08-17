@@ -24,11 +24,10 @@ jobs:
           GPG_FINGERPRINT: 82DE44111B30F91F55BCEB1F414687A3CD7E65B9
         run: |
           set -e
-          # Pull the maintainer's public GPG keys from the GitHub API and
-          # import the one whose long keyid matches our expected fingerprint.
-          # This lets `git verify-tag` succeed on the runner.
-          curl -fsSL "https://api.github.com/users/airvzxf/gpg_keys" \
-            | jq -r '.[] | select(.key_id | ascii_downcase == ("414687A3CD7E65B9" | ascii_downcase)) | .raw_key' \
+          # The unauthenticated /users/<name>/gpg_keys API endpoint returns 403
+          # on the runner (anonymous rate limit). github.com/<user>.gpg works
+          # without auth and returns all the user's public keys.
+          curl -fsSL https://github.com/airvzxf.gpg \
             | gpg --import
           gpg --list-keys "$GPG_FINGERPRINT"
 
