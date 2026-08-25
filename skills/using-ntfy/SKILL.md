@@ -32,7 +32,7 @@ API key.
 Open the app, tap "+", and subscribe to your topic. You will get a push for
 every message posted to it.
 
-## The six slash commands
+## The ten slash commands
 
 | Command | What it writes |
 |---------|----------------|
@@ -42,7 +42,10 @@ every message posted to it.
 | `/kimi-ntfy:lang <en\|es>` | Notification copy and CLI messages language; default `en` |
 | `/kimi-ntfy:server <url> [token]` | Change the ntfy server without rewriting the topic; pass an empty token string to clear it |
 | `/kimi-ntfy:subagents <on\|off>` | Toggle push notifications for `SubagentStop` events; default `off` |
-| `/kimi-ntfy:priority <level>` | Override the ntfy priority for every event (`min`, `low`, `default`, `high`, `urgent`; aliases `silent`, `normal`, `max`, `critical`). |
+| `/kimi-ntfy:session <on\|off>` | Toggle push notifications for `SessionEnd` events; default `on` |
+| `/kimi-ntfy:approval <on\|off>` | Toggle push notifications when Kimi requests permission/approval (`PermissionRequest`); default `on` |
+| `/kimi-ntfy:turnend <on\|off>` | Toggle push notifications for `Stop` (end-of-turn) events; default `on` |
+| `/kimi-ntfy:priority <level>` | Override the ntfy priority for every event (`min`, `low`, `default`, `high`, `urgent`; aliases `silent`, `normal`, `max`, `critical`; or `reset` to revert). |
 
 Config lives at `~/.kimi-code/kimi-ntfy-config.json` (or `$KIMI_CODE_HOME`).
 The CLI sets file mode `0600`.
@@ -63,8 +66,14 @@ docker run -d \
 Put nginx or Caddy in front for TLS, then point the plugin at it:
 
 ```
-/kimi-ntfy:server https://ntfy.tu-dominio.com
-/kimi-ntfy:setup mi-topic tk_xxx
+/kimi-ntfy:setup mi-topic https://ntfy.tu-dominio.com tk_xxx
+```
+
+Or configure server and topic separately:
+
+```
+/kimi-ntfy:server https://ntfy.tu-dominio.com tk_xxx
+/kimi-ntfy:setup mi-topic
 ```
 
 See `https://docs.ntfy.sh/install/` for `server.yml` auth and base URL setup.

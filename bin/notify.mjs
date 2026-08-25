@@ -3,14 +3,99 @@
 // Hook handler: lee el evento del stdin, decide tipo de notificación, POST a ntfy.sh.
 // Idioma y toggle de sub-agentes se leen de ~/.kimi-code/kimi-ntfy-config.json.
 
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { SUPPORTED_LANGS, resolvePriority, t } from './i18n.mjs';
 
 const HOME = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
 const CONFIG_PATH = join(HOME, 'kimi-ntfy-config.json');
 const DEFAULT_SERVER = 'https://ntfy.sh';
+
+function normalizeServer(url) {
+  return url ? url.replace(/\/+$/, '') : url;
+}
+
+function findSessionDir(sessionId) {
+  if (!sessionId) return null;
+  const sessionsRoot = join(HOME, 'sessions');
+  if (!existsSync(sessionsRoot)) return null;
+  try {
+    const entries = readdirSync(sessionsRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const candidate = join(sessionsRoot, entry.name, sessionId);
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function checkMainAgentIdle(sessionDir) {
+  const mainWire = join(sessionDir, 'agents', 'main', 'wire.jsonl');
+  if (!existsSync(mainWire)) return true;
+
+  try {
+    const content = readFileSync(mainWire, 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
+    if (lines.length === 0) return true;
+
+    let pendingToolCalls = 0;
+    let lastFinishReason = null;
+
+    for (let i = Math.max(0, lines.length - 40); i < lines.length; i++) {
+      try {
+        const entry = JSON.parse(lines[i]);
+        const ev = entry.event;
+        if (ev) {
+          if (ev.type === 'tool.call') pendingToolCalls++;
+          if (ev.type === 'tool.result') pendingToolCalls = Math.max(0, pendingToolCalls - 1);
+          if (ev.type === 'step.end') {
+            lastFinishReason = ev.finishReason || ev.rawFinishReason;
+          }
+        }
+      } catch {}
+    }
+
+    if (pendingToolCalls > 0) return false;
+    if (lastFinishReason === 'tool_use' || lastFinishReason === 'tool_calls') return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+async function verifySettledStop(sessionId, config) {
+  // En ambiente de tests o si no es un sessionId con formato real, no retrasar
+  if (process.env.NODE_ENV === 'test' || !sessionId || !sessionId.startsWith('session_')) {
+    return true;
+  }
+
+  const sessionDir = findSessionDir(sessionId);
+  if (!sessionDir) return true;
+
+  // Verificación 1: ¿main está ocupado ahora mismo con herramientas o subagentes?
+  if (!checkMainAgentIdle(sessionDir)) {
+    return false;
+  }
+
+  // Loop de verificación y reposo (2 intentos de 2.5s = ~5s total de asentamiento)
+  const attempts = cfgField(config, 'settleAttempts', 2);
+  const intervalMs = cfgField(config, 'settleIntervalMs', 2500);
+
+  for (let i = 0; i < attempts; i++) {
+    await sleep(intervalMs);
+    // Si durante la espera main lanzó otra herramienta o subagente, descartar Stop
+    if (!checkMainAgentIdle(sessionDir)) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 async function readStdin() {
   const chunks = [];
@@ -24,7 +109,7 @@ async function readConfig() {
     return JSON.parse(raw);
   } catch (err) {
     if (err.code === 'ENOENT') return null;
-    throw err;
+    return null;
   }
 }
 
@@ -35,54 +120,131 @@ function cfgField(config, key, fallback) {
   return value === undefined || value === null ? fallback : value;
 }
 
+function getLastAssistantText(sessionDir) {
+  if (!sessionDir) return null;
+  const mainWire = join(sessionDir, 'agents', 'main', 'wire.jsonl');
+  if (!existsSync(mainWire)) return null;
+
+  try {
+    const content = readFileSync(mainWire, 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
+    if (lines.length === 0) return null;
+
+    const textParts = [];
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]);
+        const ev = entry.event;
+        if (ev) {
+          if (ev.type === 'content.part' && ev.part && ev.part.text) {
+            textParts.unshift(ev.part.text);
+          } else if (ev.type === 'step.begin' && textParts.length > 0) {
+            break;
+          }
+        }
+      } catch {}
+    }
+
+    const fullText = textParts.join('').trim();
+    if (!fullText) return null;
+
+    // Truncate to a safe size for ntfy (~3000 chars)
+    if (fullText.length > 3000) {
+      return `${fullText.slice(0, 3000)}...\n\n*(Truncated)*`;
+    }
+    return fullText;
+  } catch {
+    return null;
+  }
+}
+
 function buildNotification(event, payload, config) {
   const lang = SUPPORTED_LANGS.includes(cfgField(config, 'language', 'en'))
     ? config.language
     : 'en';
   const s = t(lang);
 
-  const project = payload.cwd ? payload.cwd.split('/').filter(Boolean).pop() : 'kimi';
-  const sessionId = payload.session_id || 'unknown';
-  const sessionTitle = payload.session_title || '(no title)';
+  const project = payload.cwd ? payload.cwd.split('/').filter(Boolean).pop() : 'Unknown';
+  const sessionId = payload.session_id || 'Unknown';
+  const sessionTitle = payload.session_title || 'Unknown';
   const agentName = payload.agent_name || 'sub-agent';
   const resumeCmd = `kimi --session ${sessionId}`;
   const topic = cfgField(config, 'topic', '');
-  const server = cfgField(config, 'server', DEFAULT_SERVER);
-  const topicUrl = `${server}/${topic}`;
+  const server = normalizeServer(cfgField(config, 'server', DEFAULT_SERVER));
+  const topicUrl = `${server}/${encodeURIComponent(topic)}`;
+
+  const sessionDir = findSessionDir(sessionId);
+  const assistantText = getLastAssistantText(sessionDir);
+  const copyLabel = s.copyCommand || 'Copy command';
+  const actions =
+    sessionId && sessionId !== 'Unknown' && sessionId !== 'unknown'
+      ? `copy, ${copyLabel}, ${resumeCmd}`
+      : undefined;
 
   switch (event) {
     case 'Stop':
       return {
         title: s.stopTitle(project),
-        message: s.stopBody(payload.cwd || '?', sessionTitle, resumeCmd),
+        message: s.stopBody(payload.cwd || '?', sessionTitle, resumeCmd, assistantText),
         tags: s.tags.stop,
         priority: s.priority.stop,
-        click: topicUrl,
+        actions,
       };
-    case 'StopFailure':
+    case 'StopFailure': {
+      const errorMsg = payload.error_message || payload.error_type || '';
       return {
         title: s.stopFailureTitle(project),
-        message: s.stopFailureBody(payload.cwd || '?', sessionTitle, resumeCmd),
+        message: s.stopFailureBody(payload.cwd || '?', sessionTitle, resumeCmd, errorMsg),
         tags: s.tags.stopFailure,
         priority: s.priority.stopFailure,
-        click: topicUrl,
+        actions,
       };
+    }
+    case 'PermissionRequest': {
+      let action = payload.action || payload.tool_name || 'Action requires approval';
+      if (payload.tool_input) {
+        if (typeof payload.tool_input === 'string') {
+          action = payload.tool_input;
+        } else if (payload.tool_input.question) {
+          action = payload.tool_input.question;
+        } else if (payload.tool_input.CommandLine) {
+          action = `\`${payload.tool_input.CommandLine}\``;
+        } else if (payload.tool_input.command) {
+          action = `\`${payload.tool_input.command}\``;
+        }
+      }
+      return {
+        title: s.permissionTitle(project),
+        message: s.permissionBody(payload.cwd || '?', action, sessionTitle, resumeCmd),
+        tags: s.tags.permission,
+        priority: s.priority.permission,
+        actions,
+      };
+    }
     case 'SessionEnd':
       return {
         title: s.sessionEndTitle(project),
         message: s.sessionEndBody(payload.cwd || '?', sessionTitle, resumeCmd),
         tags: s.tags.sessionEnd,
         priority: s.priority.sessionEnd,
-        click: topicUrl,
+        actions,
       };
-    case 'SubagentStop':
+    case 'SubagentStop': {
+      const subagentResponse = payload.response ? String(payload.response).trim() : '';
       return {
         title: s.subagentStopTitle(project, agentName),
-        message: s.subagentStopBody(payload.cwd || '?', agentName, sessionTitle, resumeCmd),
+        message: s.subagentStopBody(
+          payload.cwd || '?',
+          agentName,
+          sessionTitle,
+          resumeCmd,
+          subagentResponse,
+        ),
         tags: s.tags.subagentStop,
         priority: s.priority.subagentStop,
-        click: topicUrl,
+        actions,
       };
+    }
     default:
       return null;
   }
@@ -109,10 +271,43 @@ async function main() {
     process.exit(0);
   }
 
-  // Toggle de sub-agentes: si está apagado y el evento es SubagentStop, salir silencioso.
+  // Toggle de fin de turno: si está apagado y el evento es Stop, salir silencioso.
   const event = payload.hook_event_name;
+  if (event === 'Stop' && !cfgField(config, 'notifyTurnEnd', true)) {
+    process.exit(0);
+  }
+
+  // Toggle de sub-agentes: si está apagado y el evento es SubagentStop, salir silencioso.
   if (event === 'SubagentStop' && !cfgField(config, 'notifySubagent', false)) {
     process.exit(0);
+  }
+
+  // Si un subagente emite un Stop interno y notifySubagent está desactivado, silenciarlo.
+  if (
+    event === 'Stop' &&
+    payload.agent_name &&
+    payload.agent_name !== 'main' &&
+    !cfgField(config, 'notifySubagent', false)
+  ) {
+    process.exit(0);
+  }
+
+  // Toggle de fin de sesión: si está apagado y el evento es SessionEnd, salir silencioso.
+  if (event === 'SessionEnd' && !cfgField(config, 'notifySessionEnd', true)) {
+    process.exit(0);
+  }
+
+  // Toggle de aprobación/permiso: si está apagado y el evento es PermissionRequest, salir silencioso.
+  if (event === 'PermissionRequest' && !cfgField(config, 'notifyApproval', true)) {
+    process.exit(0);
+  }
+
+  // Para eventos Stop: verificar que el agente principal no tenga herramientas activas y esté asentado
+  if (event === 'Stop') {
+    const isSettled = await verifySettledStop(payload.session_id, config);
+    if (!isSettled) {
+      process.exit(0);
+    }
   }
 
   const note = buildNotification(event, payload, config);
@@ -127,14 +322,17 @@ async function main() {
     note.priority = overridePriority;
   }
 
-  const url = `${config.server || DEFAULT_SERVER}/${encodeURIComponent(config.topic)}`;
+  const server = normalizeServer(config.server || DEFAULT_SERVER);
+  const url = `${server}/${encodeURIComponent(config.topic)}`;
   const headers = {
     Title: note.title,
     Priority: String(note.priority),
     Tags: note.tags.join(','),
-    Click: note.click,
     Markdown: 'yes',
   };
+  if (note.actions) {
+    headers.Actions = note.actions;
+  }
   if (config.token) {
     headers.Authorization = `Bearer ${config.token}`;
   }

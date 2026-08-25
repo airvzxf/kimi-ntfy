@@ -2,14 +2,45 @@
 
 All notable changes to kimi-ntfy are documented in this file.
 
-## [Unreleased]
+## [0.6.0] - 2026-08-25
 
-### Fixed
-- Install command in README was using the SSH form (`git@github.com:...`),
-  which Kimi Code's `/plugins install` interprets as a local path and
-  errors with `Plugin root does not exist`. Switched to the documented
-  HTTPS form `https://github.com/airvzxf/kimi-ntfy/releases/tag/<version>`.
-  Applies to both the English and Spanish install snippets.
+### Added
+- New `/kimi-ntfy:turnend <on|off>` slash command and CLI subcommand
+  `kimi-ntfy-cli turnend <on|off>` that toggle the `notifyTurnEnd` config
+  field. Aliases accepted: `turn-end`, `turns`.
+- New `/kimi-ntfy:session <on|off>` slash command and CLI subcommand
+  `kimi-ntfy-cli session <on|off>` that toggle `notifySessionEnd`.
+- New `/kimi-ntfy:approval <on|off>` slash command and CLI subcommand
+  `kimi-ntfy-cli approval <on|off>` that toggle `notifyApproval`.
+- Hook support for `PermissionRequest` events (`[approval]` notifications).
+- Session settlement and main agent idle detection (`agents/main/wire.jsonl`):
+  silences proxy-`Stop` events while subagents or tools are running, and verifies
+  turn stability before sending notifications.
+- Assistant message extraction: notifications now include the actual model response
+  text and details in the message body.
+- Action button: native `Actions: copy` button in notifications to copy the resume command
+  with a single tap. Removed `Click` header to open ntfy directly instead of launching browser.
+- Clean notification body hierarchy with icons: `📁` directory, `💬` session title,
+  `📢` assistant text / status, `❓` approval prompt, and `🔗` resume command.
+- Updated default priorities: `Stop` (5 - urgent), `PermissionRequest` (5 - urgent).
+
+### Changed
+- Version bumped to `0.6.0` (minor: new commands and features, backward-compatible).
+
+## [0.5.0] - 2026-08-25
+
+### Added
+- New `notifyTurnEnd` config field (boolean, default `true`). When set to
+  `false`, the handler silences every `Stop` event regardless of payload,
+  eliminating the duplicate push that Kimi Code fires when a sub-agent
+  finishes its turn (the `Stop` arrives with the main session's metadata and
+  no `agent_name`, so the previous `notifySubagent`-only filter could not
+  catch it).
+- README has a new row in the config table documenting `notifyTurnEnd`.
+
+### Changed
+- Version bumped to `0.5.0` (minor: new feature, backward-compatible — the
+  default `true` preserves the previous behavior).
 
 ## [0.4.0] - 2026-08-17
 

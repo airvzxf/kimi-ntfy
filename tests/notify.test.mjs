@@ -49,7 +49,7 @@ async function runNotify(home, stdinText, extraEnv = {}) {
   });
 }
 
-test('Stop posts once with priority 3, white_check_mark tag, and cwd in body', async () => {
+test('Stop posts once with priority 5, white_check_mark tag, and cwd in body', async () => {
   const mock = await start();
   const home = await tmpHome();
   try {
@@ -60,10 +60,15 @@ test('Stop posts once with priority 3, white_check_mark tag, and cwd in body', a
     const rec = mock.records[0];
     assert.equal(rec.method, 'POST');
     assert.ok(rec.headers.title, 'Title header should be present');
-    assert.equal(rec.headers.priority, '3');
+    assert.equal(rec.headers.priority, '5');
     assert.ok(rec.headers.tags.includes('white_check_mark'), `tags were ${rec.headers.tags}`);
     assert.equal(rec.headers.markdown, 'yes');
-    assert.ok(rec.headers.click.includes('/mytopic'), `click was ${rec.headers.click}`);
+    assert.equal(
+      rec.headers.click,
+      undefined,
+      'Click header should be omitted to avoid launching browser',
+    );
+    assert.ok(rec.headers.actions.includes('copy,'), `actions was ${rec.headers.actions}`);
     assert.ok(rec.body.includes('/home/wolf/projects/app'), `body was ${rec.body}`);
   } finally {
     await mock.close().catch(() => {});
@@ -103,6 +108,51 @@ test('SessionEnd posts with priority 2 and tag "wave"', async () => {
   }
 });
 
+test('SessionEnd is silenced when notifySessionEnd is false', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url, notifySessionEnd: false });
+    const r = await runNotify(home, JSON.stringify(payloads.sessionEnd));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('PermissionRequest posts with priority 5 and tag "hand"', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url });
+    const r = await runNotify(home, JSON.stringify(payloads.permissionRequest));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    assert.equal(mock.records[0].headers.priority, '5');
+    assert.ok(mock.records[0].headers.tags.includes('hand'));
+    assert.ok(mock.records[0].body.includes('npm run build'));
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('PermissionRequest is silenced when notifyApproval is false', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url, notifyApproval: false });
+    const r = await runNotify(home, JSON.stringify(payloads.permissionRequest));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('SubagentStop is silenced when notifySubagent is false', async () => {
   const mock = await start();
   const home = await tmpHome();
@@ -117,6 +167,85 @@ test('SubagentStop is silenced when notifySubagent is false', async () => {
   }
 });
 
+test('Stop event with agent_name is silenced when notifySubagent is false', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url, notifySubagent: false });
+    const r = await runNotify(home, JSON.stringify({ ...payloads.stop, agent_name: 'explore' }));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop is silenced when notifyTurnEnd is false (the proxy-stop bug)', async () => {
+  // Reproduces the bug where Kimi Code fires a `Stop` event when a sub-agent
+  // finishes its turn. The payload has the main session's metadata and no
+  // `agent_name`, so the legacy `notifySubagent`-based filter cannot catch it.
+  // `notifyTurnEnd: false` silences every `Stop`, eliminating the duplicate push.
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, {
+      topic: 'mytopic',
+      server: mock.url,
+      notifyTurnEnd: false,
+      notifySubagent: false,
+    });
+    const r = await runNotify(home, JSON.stringify(payloads.stop));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0, 'no notification should be posted');
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop posts normally when notifyTurnEnd is true (default)', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, {
+      topic: 'mytopic',
+      server: mock.url,
+      notifyTurnEnd: true,
+    });
+    const r = await runNotify(home, JSON.stringify(payloads.stop));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    assert.ok(mock.records[0].headers.tags.includes('white_check_mark'));
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('notifyTurnEnd: false does not silence StopFailure, SessionEnd, or PermissionRequest', async () => {
+  // Only `Stop` is silenced; the other lifecycle hooks still post.
+  for (const payloadKey of ['stopFailure', 'sessionEnd', 'permissionRequest']) {
+    const mock = await start();
+    const home = await tmpHome();
+    try {
+      await seed(home, {
+        topic: 'mytopic',
+        server: mock.url,
+        notifyTurnEnd: false,
+        notifySessionEnd: true,
+        notifyApproval: true,
+      });
+      const r = await runNotify(home, JSON.stringify(payloads[payloadKey]));
+      assert.equal(r.code, 0, `stderr=${r.stderr} payload=${payloadKey}`);
+      assert.equal(mock.records.length, 1, `expected 1 record for ${payloadKey}`);
+    } finally {
+      await mock.close().catch(() => {});
+      await rm(home, { recursive: true, force: true });
+    }
+  }
+});
+
 test('SubagentStop posts and the body mentions the agent name when enabled', async () => {
   const mock = await start();
   const home = await tmpHome();
@@ -126,6 +255,91 @@ test('SubagentStop posts and the body mentions the agent name when enabled', asy
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 1);
     assert.ok(mock.records[0].body.includes('explore'), `body was ${mock.records[0].body}`);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop is silenced when main agent wire has tool calls in progress', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url, notifyTurnEnd: true });
+    const sessionDir = join(
+      home,
+      'sessions',
+      'wd_test_123',
+      'session_real_busy_123',
+      'agents',
+      'main',
+    );
+    await mkdir(sessionDir, { recursive: true });
+    const wireContent = [
+      JSON.stringify({ event: { type: 'tool.call', toolCall: { name: 'Agent' } } }),
+      JSON.stringify({ event: { type: 'step.end', finishReason: 'tool_use' } }),
+    ].join('\n');
+    await writeFile(join(sessionDir, 'wire.jsonl'), wireContent);
+
+    const payload = {
+      hook_event_name: 'Stop',
+      session_id: 'session_real_busy_123',
+      cwd: '/home/wolf/test',
+    };
+    const r = await runNotify(home, JSON.stringify(payload));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0, 'busy main agent should silence Stop');
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop posts when main agent wire has finished turn with no tools in progress', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, {
+      topic: 'mytopic',
+      server: mock.url,
+      notifyTurnEnd: true,
+      settleAttempts: 0,
+    });
+    const sessionDir = join(
+      home,
+      'sessions',
+      'wd_test_123',
+      'session_real_idle_123',
+      'agents',
+      'main',
+    );
+    await mkdir(sessionDir, { recursive: true });
+    const wireContent = [
+      JSON.stringify({
+        event: { type: 'content.part', part: { text: 'Todo listo sin errores.' } },
+      }),
+      JSON.stringify({ event: { type: 'step.end', finishReason: 'end_turn' } }),
+    ].join('\n');
+    await writeFile(join(sessionDir, 'wire.jsonl'), wireContent);
+
+    const payload = {
+      hook_event_name: 'Stop',
+      session_id: 'session_real_idle_123',
+      cwd: '/home/wolf/test',
+    };
+    const r = await runNotify(home, JSON.stringify(payload));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1, 'idle main agent should post Stop');
+    assert.ok(
+      mock.records[0].body.includes('Todo listo sin errores.'),
+      `body was ${mock.records[0].body}`,
+    );
+    assert.ok(
+      mock.records[0].body.includes('📁 /home/wolf/test'),
+      `body was ${mock.records[0].body}`,
+    );
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });
@@ -217,7 +431,11 @@ test('Spanish notifications include Spanish text in the body', async () => {
     const r = await runNotify(home, JSON.stringify(payloads.stop));
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 1);
-    assert.ok(mock.records[0].body.includes('Sesión:'), `body was ${mock.records[0].body}`);
+    assert.ok(
+      mock.records[0].body.includes('Kimi terminó su turno.') ||
+        mock.records[0].body.includes('📁'),
+      `body was ${mock.records[0].body}`,
+    );
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });
@@ -264,8 +482,8 @@ test('invalid priority in config is silently ignored (per-event default applies)
     const r = await runNotify(home, JSON.stringify(payloads.stop));
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 1);
-    // Stop default is 3 — typo must not stop notifications.
-    assert.equal(mock.records[0].headers.priority, '3');
+    // Stop default is 5 (urgent) — typo must not stop notifications.
+    assert.equal(mock.records[0].headers.priority, '5');
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });

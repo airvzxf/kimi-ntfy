@@ -169,18 +169,103 @@ test('cli server sets the URL and rejects non-URL input', async () => {
   }
 });
 
-test('cli subagents on|off toggles the flag; rejects anything else', async () => {
+test('cli setup rejects a non-URL server', async () => {
+  const home = await tmpHome('setup-bad-server');
+  try {
+    const r = await runCli(home, 'setup', 'mytopic', 'invalid-server');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /server/i);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('cli subagents on|off toggles the flag and prints proper feedback', async () => {
   const home = await tmpHome('sub');
   try {
     await seed(home, { topic: 't' });
     const on = await runCli(home, 'subagents', 'on');
     assert.equal(on.status, 0, `unexpected exit, stderr=${on.stderr}`);
     assert.equal((await readConfig(home)).notifySubagent, true);
+    assert.match(on.stdout, /enabled/);
     const off = await runCli(home, 'subagents', 'off');
     assert.equal(off.status, 0, `unexpected exit, stderr=${off.stderr}`);
     assert.equal((await readConfig(home)).notifySubagent, false);
+    assert.match(off.stdout, /disabled/);
     const bad = await runCli(home, 'subagents', 'maybe');
     assert.equal(bad.status, 2);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('cli session on|off toggles notifySessionEnd flag and prints proper feedback', async () => {
+  const home = await tmpHome('session');
+  try {
+    await seed(home, { topic: 't' });
+    const off = await runCli(home, 'session', 'off');
+    assert.equal(off.status, 0, `unexpected exit, stderr=${off.stderr}`);
+    assert.equal((await readConfig(home)).notifySessionEnd, false);
+    assert.match(off.stdout, /disabled/);
+    const on = await runCli(home, 'session', 'on');
+    assert.equal(on.status, 0, `unexpected exit, stderr=${on.stderr}`);
+    assert.equal((await readConfig(home)).notifySessionEnd, true);
+    assert.match(on.stdout, /enabled/);
+    const bad = await runCli(home, 'session', 'maybe');
+    assert.equal(bad.status, 2);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('cli approval on|off toggles notifyApproval flag and prints proper feedback', async () => {
+  const home = await tmpHome('approval');
+  try {
+    await seed(home, { topic: 't' });
+    const off = await runCli(home, 'approval', 'off');
+    assert.equal(off.status, 0, `unexpected exit, stderr=${off.stderr}`);
+    assert.equal((await readConfig(home)).notifyApproval, false);
+    assert.match(off.stdout, /disabled/);
+    const on = await runCli(home, 'approval', 'on');
+    assert.equal(on.status, 0, `unexpected exit, stderr=${on.stderr}`);
+    assert.equal((await readConfig(home)).notifyApproval, true);
+    assert.match(on.stdout, /enabled/);
+    const bad = await runCli(home, 'approval', 'maybe');
+    assert.equal(bad.status, 2);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('cli turnend on|off toggles notifyTurnEnd flag and prints proper feedback', async () => {
+  const home = await tmpHome('turnend');
+  try {
+    await seed(home, { topic: 't' });
+    const off = await runCli(home, 'turnend', 'off');
+    assert.equal(off.status, 0, `unexpected exit, stderr=${off.stderr}`);
+    assert.equal((await readConfig(home)).notifyTurnEnd, false);
+    assert.match(off.stdout, /disabled/);
+    const on = await runCli(home, 'turnend', 'on');
+    assert.equal(on.status, 0, `unexpected exit, stderr=${on.stderr}`);
+    assert.equal((await readConfig(home)).notifyTurnEnd, true);
+    assert.match(on.stdout, /enabled/);
+    const bad = await runCli(home, 'turnend', 'maybe');
+    assert.equal(bad.status, 2);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('cli turnend aliases (turn-end, turns) map to the same handler', async () => {
+  const home = await tmpHome('turnend-alias');
+  try {
+    await seed(home, { topic: 't' });
+    const a = await runCli(home, 'turn-end', 'off');
+    assert.equal(a.status, 0, `stderr=${a.stderr}`);
+    assert.equal((await readConfig(home)).notifyTurnEnd, false);
+    const b = await runCli(home, 'turns', 'on');
+    assert.equal(b.status, 0, `stderr=${b.stderr}`);
+    assert.equal((await readConfig(home)).notifyTurnEnd, true);
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -218,6 +303,19 @@ test('cli priority accepts the five ntfy names and aliases; rejects others', asy
   }
 });
 
+test('cli priority reset removes the priority override', async () => {
+  const home = await tmpHome('pri-reset');
+  try {
+    await seed(home, { topic: 't', priority: 'high' });
+    const r = await runCli(home, 'priority', 'reset');
+    assert.equal(r.status, 0, `unexpected exit, stderr=${r.stderr}`);
+    const cfg = await readConfig(home);
+    assert.equal(cfg.priority, undefined);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('cli test posts to the configured server', async () => {
   const mock = await start();
   const home = await tmpHome('test-ok');
@@ -227,6 +325,20 @@ test('cli test posts to the configured server', async () => {
     const r = await runCli(home, 'test');
     assert.equal(r.status, 0, `unexpected exit, stderr=${r.stderr}`);
     assert.equal(mock.records.length, before + 1);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('cli test posts with Authorization header when token is configured', async () => {
+  const mock = await start();
+  const home = await tmpHome('test-token');
+  try {
+    await seed(home, { topic: 'hello', server: mock.url, token: 'tk_secret' });
+    const r = await runCli(home, 'test');
+    assert.equal(r.status, 0, `unexpected exit, stderr=${r.stderr}`);
+    assert.equal(mock.records[0].headers.authorization, 'Bearer tk_secret');
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });

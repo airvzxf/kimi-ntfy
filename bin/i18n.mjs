@@ -15,46 +15,60 @@ export const STRINGS = {
     languageChanged: 'Language set to',
     languageInvalid: 'invalid language (use "en" or "es")',
     serverChanged: 'Server set to',
+    serverInvalid: 'server must start with http:// or https://',
     subagentsOn: 'sub-agent notifications enabled',
     subagentsOff: 'sub-agent notifications disabled',
+    sessionOn: 'session end notifications enabled',
+    sessionOff: 'session end notifications disabled',
+    approvalOn: 'approval notifications enabled',
+    approvalOff: 'approval notifications disabled',
+    turnEndOn: 'turn-end notifications enabled',
+    turnEndOff: 'turn-end notifications disabled',
     priorityChanged: 'Priority set to',
-    priorityInvalid: 'invalid priority (use "min", "low", "default", "high", or "urgent")',
+    priorityReset: 'Priority override removed (reverted to per-event defaults)',
+    priorityInvalid: 'invalid priority (use "min", "low", "default", "high", "urgent", or "reset")',
     configCurrent: 'Current config:',
     topicUrl: 'Topic URL:',
     ntfyResponded: 'ntfy responded',
     unknownSubcommand: 'unknown subcommand:',
     helpUsage: 'Usage:',
+    copyCommand: 'Copy command',
 
     // Notification titles and bodies (handler)
     stopTitle: (project) => `[done] ${project}`,
-    stopBody: (cwd, title, resume) =>
-      `Kimi finished its turn in \`${cwd}\`.\n` +
-      `Session: ${title}\n` +
-      `To resume: \`${resume}\``,
+    stopBody: (cwd, title, resume, text) =>
+      `📁 ${cwd}\n` +
+      `💬 ${title}\n\n` +
+      `📢 ${text || 'Kimi finished its turn.'}\n\n` +
+      `🔗 ${resume}`,
     stopFailureTitle: (project) => `[failed] ${project}`,
-    stopFailureBody: (cwd, title, resume) =>
-      `Kimi stopped with an error in \`${cwd}\`.\n` +
-      `Session: ${title}\n` +
-      `Check the transcript: \`${resume}\``,
+    stopFailureBody: (cwd, title, resume, errorMsg) =>
+      `📁 ${cwd}\n` +
+      `💬 ${title}\n\n` +
+      `📢 ${errorMsg || 'Kimi stopped with an error.'}\n\n` +
+      `🔗 ${resume}`,
+    permissionTitle: (project) => `[approval] ${project}`,
+    permissionBody: (cwd, action, title, resume) =>
+      `📁 ${cwd}\n${title ? `💬 ${title}\n\n` : '\n'}❓ ${action}\n\n🔗 ${resume}`,
     sessionEndTitle: (project) => `[closed] ${project}`,
     sessionEndBody: (cwd, title, resume) =>
-      `Session closed in \`${cwd}\`.\n` + `Last title: ${title}\n` + `Reopen with: \`${resume}\``,
+      `📁 ${cwd}\n💬 ${title}\n\n📢 Session closed.\n\n🔗 ${resume}`,
     subagentStopTitle: (project, agent) => `[sub-agent] ${project} ${agent}`,
-    subagentStopBody: (cwd, agent, title, resume) =>
-      `Sub-agent \`${agent}\` finished in \`${cwd}\`.\n` +
-      `Session: ${title}\n` +
-      `To resume: \`${resume}\``,
+    subagentStopBody: (cwd, agent, title, resume, text) =>
+      `📁 ${cwd}\n💬 ${title}\n\n📢 Sub-agent \`${agent}\` finished.\n${text ? `\n📝 ${text}\n\n` : '\n'}🔗 ${resume}`,
 
     // Tags and priorities are language-agnostic, but kept here for symmetry
     tags: {
       stop: ['white_check_mark', 'robot'],
       stopFailure: ['x', 'warning'],
+      permission: ['hand', 'warning'],
       sessionEnd: ['wave', 'robot'],
       subagentStop: ['link', 'robot'],
     },
     priority: {
-      stop: 3,
+      stop: 5,
       stopFailure: 4,
+      permission: 5,
       sessionEnd: 2,
       subagentStop: 1,
     },
@@ -76,46 +90,58 @@ export const STRINGS = {
     languageChanged: 'Idioma cambiado a',
     languageInvalid: 'idioma inválido (use "en" o "es")',
     serverChanged: 'Servidor cambiado a',
+    serverInvalid: 'el servidor debe comenzar con http:// o https://',
     subagentsOn: 'notificaciones de sub-agentes activadas',
     subagentsOff: 'notificaciones de sub-agentes desactivadas',
+    sessionOn: 'notificaciones de fin de sesión activadas',
+    sessionOff: 'notificaciones de fin de sesión desactivadas',
+    approvalOn: 'notificaciones de aprobación activadas',
+    approvalOff: 'notificaciones de aprobación desactivadas',
+    turnEndOn: 'notificaciones de fin de turno activadas',
+    turnEndOff: 'notificaciones de fin de turno desactivadas',
     priorityChanged: 'Prioridad cambiada a',
-    priorityInvalid: 'prioridad inválida (use "min", "low", "default", "high" o "urgent")',
+    priorityReset: 'Prioridad personalizada eliminada (restablecida a valores por evento)',
+    priorityInvalid: 'prioridad inválida (use "min", "low", "default", "high", "urgent" o "reset")',
     configCurrent: 'Config actual:',
     topicUrl: 'URL del topic:',
     ntfyResponded: 'ntfy respondió',
     unknownSubcommand: 'subcomando desconocido:',
     helpUsage: 'Uso:',
+    copyCommand: 'Copiar comando',
 
     stopTitle: (project) => `[listo] ${project}`,
-    stopBody: (cwd, title, resume) =>
-      `Kimi terminó su turno en \`${cwd}\`.\n` +
-      `Sesión: ${title}\n` +
-      `Para retomar: \`${resume}\``,
+    stopBody: (cwd, title, resume, text) =>
+      `📁 ${cwd}\n` +
+      `💬 ${title}\n\n` +
+      `📢 ${text || 'Kimi terminó su turno.'}\n\n` +
+      `🔗 ${resume}`,
     stopFailureTitle: (project) => `[falló] ${project}`,
-    stopFailureBody: (cwd, title, resume) =>
-      `Kimi terminó por error en \`${cwd}\`.\n` +
-      `Sesión: ${title}\n` +
-      `Revisa el transcript: \`${resume}\``,
+    stopFailureBody: (cwd, title, resume, errorMsg) =>
+      `📁 ${cwd}\n` +
+      `💬 ${title}\n\n` +
+      `📢 ${errorMsg || 'Kimi terminó por error.'}\n\n` +
+      `🔗 ${resume}`,
+    permissionTitle: (project) => `[aprobación] ${project}`,
+    permissionBody: (cwd, action, title, resume) =>
+      `📁 ${cwd}\n${title ? `💬 ${title}\n\n` : '\n'}❓ ${action}\n\n🔗 ${resume}`,
     sessionEndTitle: (project) => `[cerrada] ${project}`,
     sessionEndBody: (cwd, title, resume) =>
-      `Sesión cerrada en \`${cwd}\`.\n` +
-      `Último título: ${title}\n` +
-      `Reabrir con: \`${resume}\``,
+      `📁 ${cwd}\n💬 ${title}\n\n📢 Sesión cerrada.\n\n🔗 ${resume}`,
     subagentStopTitle: (project, agent) => `[sub-agente] ${project} ${agent}`,
-    subagentStopBody: (cwd, agent, title, resume) =>
-      `Sub-agente \`${agent}\` terminó en \`${cwd}\`.\n` +
-      `Sesión: ${title}\n` +
-      `Para retomar: \`${resume}\``,
+    subagentStopBody: (cwd, agent, title, resume, text) =>
+      `📁 ${cwd}\n💬 ${title}\n\n📢 Sub-agente \`${agent}\` terminó.\n${text ? `\n📝 ${text}\n\n` : '\n'}🔗 ${resume}`,
 
     tags: {
       stop: ['white_check_mark', 'robot'],
       stopFailure: ['x', 'warning'],
+      permission: ['hand', 'warning'],
       sessionEnd: ['wave', 'robot'],
       subagentStop: ['link', 'robot'],
     },
     priority: {
-      stop: 3,
+      stop: 5,
       stopFailure: 4,
+      permission: 5,
       sessionEnd: 2,
       subagentStop: 1,
     },
