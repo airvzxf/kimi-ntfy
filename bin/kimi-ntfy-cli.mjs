@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // bin/kimi-ntfy-cli.mjs
-// Sub-comandos: setup, lang, server, subagents, test, status, path.
+// Sub-comandos: setup, lang, server, subagents, session, approval, turnend, priority, test, status, path.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -42,11 +42,18 @@ ${s.helpUsage || 'Usage:'}
   kimi-ntfy-cli lang <en|es>
   kimi-ntfy-cli server <url> [token]
   kimi-ntfy-cli subagents <on|off>
-  kimi-ntfy-cli priority <min|low|default|high|urgent>
+  kimi-ntfy-cli session <on|off>
+  kimi-ntfy-cli approval <on|off>
+  kimi-ntfy-cli turnend <on|off>
+  kimi-ntfy-cli priority <min|low|default|high|urgent|reset>
   kimi-ntfy-cli test [message]
   kimi-ntfy-cli status
   kimi-ntfy-cli path
 `);
+}
+
+function normalizeServer(url) {
+  return url ? url.replace(/\/+$/, '') : url;
 }
 
 function validateTopic(topic, s) {
@@ -64,15 +71,27 @@ async function cmdSetup([topic, server, token]) {
     console.error(`Error: ${err}`);
     process.exit(2);
   }
+  if (server && !/^https?:\/\//.test(server)) {
+    console.error(`Error: ${s.serverInvalid}`);
+    process.exit(2);
+  }
   const cfg = await loadConfig();
+  const normalizedServer = server
+    ? normalizeServer(server)
+    : cfg.server
+      ? normalizeServer(cfg.server)
+      : DEFAULT_SERVER;
   const next = {
     ...cfg,
     topic,
-    server: server || cfg.server || DEFAULT_SERVER,
+    server: normalizedServer,
     language: cfg.language || 'en',
     notifySubagent: cfg.notifySubagent ?? false,
+    notifySessionEnd: cfg.notifySessionEnd ?? true,
+    notifyApproval: cfg.notifyApproval ?? true,
+    notifyTurnEnd: cfg.notifyTurnEnd ?? true,
   };
-  if (token) next.token = token;
+  if (token !== undefined) next.token = token;
   await saveConfig(next);
   console.log(`${s.configSaved} ${CONFIG_PATH}`);
   console.log(JSON.stringify(next, null, 2));
@@ -93,17 +112,17 @@ async function cmdLang([lang]) {
 }
 
 async function cmdServer([url, token]) {
+  const lang = await currentLang();
+  const s = t(lang);
   if (!url || !/^https?:\/\//.test(url)) {
-    console.error('Error: server must start with http:// or https://');
+    console.error(`Error: ${s.serverInvalid}`);
     process.exit(2);
   }
   const cfg = await loadConfig();
-  cfg.server = url;
+  cfg.server = normalizeServer(url);
   if (token !== undefined) cfg.token = token; // empty string clears
   await saveConfig(cfg);
-  const lang = await currentLang();
-  const s = t(lang);
-  console.log(`${s.serverChanged} ${url}`);
+  console.log(`${s.serverChanged} ${cfg.server}`);
   console.log(JSON.stringify({ ...cfg }, null, 2));
 }
 
@@ -117,19 +136,72 @@ async function cmdSubagents([onoff]) {
   await saveConfig(cfg);
   const lang = await currentLang();
   const s = t(lang);
-  console.log(s.notifySubagent ? s.subagentsOn : s.subagentsOff);
+  console.log(cfg.notifySubagent ? s.subagentsOn : s.subagentsOff);
+  console.log(JSON.stringify({ ...cfg }, null, 2));
+}
+
+async function cmdSession([onoff]) {
+  if (!['on', 'off'].includes(onoff)) {
+    console.error('Error: use "on" or "off"');
+    process.exit(2);
+  }
+  const cfg = await loadConfig();
+  cfg.notifySessionEnd = onoff === 'on';
+  await saveConfig(cfg);
+  const lang = await currentLang();
+  const s = t(lang);
+  console.log(cfg.notifySessionEnd ? s.sessionOn : s.sessionOff);
+  console.log(JSON.stringify({ ...cfg }, null, 2));
+}
+
+async function cmdApproval([onoff]) {
+  if (!['on', 'off'].includes(onoff)) {
+    console.error('Error: use "on" or "off"');
+    process.exit(2);
+  }
+  const cfg = await loadConfig();
+  cfg.notifyApproval = onoff === 'on';
+  await saveConfig(cfg);
+  const lang = await currentLang();
+  const s = t(lang);
+  console.log(cfg.notifyApproval ? s.approvalOn : s.approvalOff);
+  console.log(JSON.stringify({ ...cfg }, null, 2));
+}
+
+async function cmdTurnEnd([onoff]) {
+  if (!['on', 'off'].includes(onoff)) {
+    console.error('Error: use "on" or "off"');
+    process.exit(2);
+  }
+  const cfg = await loadConfig();
+  cfg.notifyTurnEnd = onoff === 'on';
+  await saveConfig(cfg);
+  const lang = await currentLang();
+  const s = t(lang);
+  console.log(cfg.notifyTurnEnd ? s.turnEndOn : s.turnEndOff);
   console.log(JSON.stringify({ ...cfg }, null, 2));
 }
 
 async function cmdPriority([level]) {
   const lang = await currentLang();
   const s = t(lang);
-  if (resolvePriority(level) === null) {
+  if (!level) {
     console.error(`Error: ${s.priorityInvalid}`);
     process.exit(2);
   }
   const normalized = level.toLowerCase();
   const cfg = await loadConfig();
+  if (['reset', 'clear', 'none', 'unset'].includes(normalized)) {
+    cfg.priority = undefined;
+    await saveConfig(cfg);
+    console.log(s.priorityReset);
+    console.log(JSON.stringify({ ...cfg }, null, 2));
+    return;
+  }
+  if (resolvePriority(level) === null) {
+    console.error(`Error: ${s.priorityInvalid}`);
+    process.exit(2);
+  }
   cfg.priority = normalized;
   await saveConfig(cfg);
   console.log(`${s.priorityChanged} ${normalized} (=${PRIORITY_LEVELS[normalized]})`);
@@ -144,15 +216,26 @@ async function cmdTest([message]) {
     console.error(s.noConfigForTest);
     process.exit(2);
   }
-  const url = `${cfg.server || DEFAULT_SERVER}/${encodeURIComponent(cfg.topic)}`;
+  const server = normalizeServer(cfg.server || DEFAULT_SERVER);
+  const url = `${server}/${encodeURIComponent(cfg.topic)}`;
   const body = message || (lang === 'es' ? 'Test desde kimi-ntfy' : 'Test from kimi-ntfy');
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { Title: 'kimi-ntfy test', Priority: '3', Tags: 'bell' },
-    body,
-  });
-  await res.text();
-  console.log(`${s.ntfyResponded} ${res.status} ${res.statusText}`);
+  const priority = cfg.priority ? String(resolvePriority(cfg.priority) ?? 3) : '3';
+  const headers = { Title: 'kimi-ntfy test', Priority: priority, Tags: 'bell' };
+  if (cfg.token) {
+    headers.Authorization = `Bearer ${cfg.token}`;
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    await res.text();
+    console.log(`${s.ntfyResponded} ${res.status} ${res.statusText}`);
+  } catch (err) {
+    console.error(s.fetchError(err.message));
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -164,9 +247,10 @@ async function cmdStatus() {
     console.log(s.noConfig);
     return;
   }
+  const server = normalizeServer(cfg.server || DEFAULT_SERVER);
   console.log(s.configCurrent);
   console.log(JSON.stringify(cfg, null, 2));
-  console.log(`\n${s.topicUrl} ${cfg.server}/${cfg.topic}`);
+  console.log(`\n${s.topicUrl} ${server}/${cfg.topic}`);
 }
 
 function cmdPath() {
@@ -181,13 +265,21 @@ const handlers = {
   lang: cmdLang,
   server: cmdServer,
   subagents: cmdSubagents,
+  session: cmdSession,
+  'session-end': cmdSession,
+  sessions: cmdSession,
+  approval: cmdApproval,
+  permissions: cmdApproval,
+  turnend: cmdTurnEnd,
+  'turn-end': cmdTurnEnd,
+  turns: cmdTurnEnd,
   priority: cmdPriority,
   test: cmdTest,
   status: cmdStatus,
   path: cmdPath,
 };
 
-if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+if (!subcommand || subcommand === '--help' || subcommand === '-h' || subcommand === 'help') {
   help();
 } else if (handlers[subcommand]) {
   Promise.resolve(handlers[subcommand](args)).catch((err) => {

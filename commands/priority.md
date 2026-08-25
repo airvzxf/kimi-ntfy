@@ -21,11 +21,11 @@ aliases in parentheses):
 The level applies to every event. If you do not set one, the plugin uses
 its per-event defaults (Stop=`default`, StopFailure=`high`,
 SessionEnd=`low`, SubagentStop=`min`). Pass any valid level to override;
-to revert to the per-event defaults, edit `kimi-ntfy-config.json` and
-remove the `priority` field.
+to revert to the per-event defaults, pass `reset` (or `clear` / `none`).
 
-Map the user's wording to one of the five names. Common mappings
+Map the user's wording to one of the names. Common mappings
 -:
   "no molestar" / "silencio" / "silenciosa" → `min` or `low`
   "normal" / "estándar" / "por defecto" → `default`
   "alta" / "urgente" / "importante" → `high` or `urgent`
+  "restablecer" / "reiniciar" / "por defecto por evento" → `reset`

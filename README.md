@@ -1,7 +1,7 @@
 # kimi-ntfy
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![Version: 0.3.0](https://img.shields.io/badge/version-0.3.0-blue.svg)](kimi.plugin.json)
+[![Version: 0.6.0](https://img.shields.io/badge/version-0.6.0-blue.svg)](kimi.plugin.json)
 [![CI](https://github.com/airvzxf/kimi-ntfy/actions/workflows/validate.yml/badge.svg)](https://github.com/airvzxf/kimi-ntfy/actions/workflows/validate.yml)
 
 Kimi Code plugin that pushes a notification to [ntfy.sh](https://ntfy.sh) when the
@@ -24,7 +24,7 @@ Spanish optional.
 ## Install
 
 ```
-/plugins install https://github.com/airvzxf/kimi-ntfy/releases/tag/v0.4.0
+/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.6.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
@@ -44,6 +44,9 @@ the ntfy rules: letters, digits, `-` and `_`, max 64 characters.
 | `/kimi-ntfy:lang <en\|es>` | Switch notification strings between English and Spanish. |
 | `/kimi-ntfy:server <url> [token]` | Point the plugin at a different ntfy server. |
 | `/kimi-ntfy:subagents <on\|off>` | Toggle `SubagentStop` notifications (default off). |
+| `/kimi-ntfy:session <on\|off>` | Toggle `SessionEnd` notifications (default on). |
+| `/kimi-ntfy:approval <on\|off>` | Toggle `PermissionRequest` notifications (default on). |
+| `/kimi-ntfy:turnend <on\|off>` | Toggle end-of-turn (`Stop`) notifications (default on). Set to `off` in long sub-agent chains so you don't get a push every time a sub-agent (or the main agent) closes a turn — keep `notifySessionEnd` on for the actual end-of-session ping. |
 | `/kimi-ntfy:priority <level>` | Override the ntfy priority for every event (see [Priority levels](#priority-levels)). |
 
 ## Configuration
@@ -57,17 +60,22 @@ The plugin reads and writes `~/.kimi-code/kimi-ntfy-config.json` (mode `0600`):
   "token": "",
   "language": "en",
   "notifySubagent": false,
+  "notifySessionEnd": true,
+  "notifyApproval": true,
   "priority": "default"
 }
 ```
 
 | Field | Default | Meaning |
 |---|---|---|
-| `topic` | (required) | ntfy topic name. Used as the POST path and the `Click` URL. |
+| `topic` | (required) | ntfy topic name. Used as the POST path. |
 | `server` | `https://ntfy.sh` | Base URL of the ntfy server. |
 | `token` | empty | Bearer token sent as `Authorization: Bearer <token>`. |
 | `language` | `en` | Notification strings: `en` or `es`. |
 | `notifySubagent` | `false` | If `true`, fires on `SubagentStop` too. |
+| `notifySessionEnd` | `true` | If `false`, silences notifications on `SessionEnd` (`[closed]`). |
+| `notifyApproval` | `true` | If `true`, fires on `PermissionRequest` (`[approval]`). |
+| `notifyTurnEnd` | `true` | If `false`, silences every `Stop` push (eliminates the duplicate notification Kimi Code fires when a sub-agent finishes its turn — the `Stop` arrives with the main session's metadata and no `agent_name`, so the previous `notifySubagent`-only filter cannot catch it). Set this to `false` when you run long sub-agent chains. |
 | `priority` | (unset) | Optional ntfy priority override that wins over every per-event default. See [Priority levels](#priority-levels). |
 
 ## Priority levels
@@ -77,8 +85,9 @@ being noisy:
 
 | Event | Default | Reasoning |
 |---|---|---|
-| `Stop` | `default` (3) | Sound + vibration — turn is done. |
+| `Stop` | `urgent` (5) | Sound + vibration — turn is done. |
 | `StopFailure` | `high` (4) | Long burst + pop-over — read the error. |
+| `PermissionRequest` | `urgent` (5) | Long burst + pop-over — Kimi needs approval/input. |
 | `SessionEnd` | `low` (2) | Silent — confirmed the session closed. |
 | `SubagentStop` | `min` (1) | Silent — only meaningful when `notifySubagent` is on. |
 
@@ -98,11 +107,11 @@ Examples:
 ```
 /kimi-ntfy:priority silent       # silence every notification
 /kimi-ntfy:priority urgent       # max-out everything (use sparingly)
-/kimi-ntfy:priority default      # back to per-event defaults
+/kimi-ntfy:priority reset        # back to per-event defaults
 ```
 
-The override is stored as a string in `kimi-ntfy-config.json`. Delete the
-`priority` field to revert to per-event defaults.
+The override is stored as a string in `kimi-ntfy-config.json`. Pass `/kimi-ntfy:priority reset`
+(or delete the `priority` field) to revert to per-event defaults.
 
 ## Self-host
 
@@ -132,29 +141,32 @@ the whole config in one pass.
 
 ## Events
 
-The plugin declares four hooks. Each handler reads `kimi-ntfy-config.json` and
-POSTs to the configured topic.
+The plugin declares five lifecycle hooks. Each handler reads `kimi-ntfy-config.json`
+and POSTs to the configured topic.
 
 | Event | Title | Tags | Priority | Default |
 |---|---|---|---|---|
-| `Stop` | `<project> - done` | `white_check_mark, robot` | 3 (default) | on |
+| `Stop` | `<project> - done` | `white_check_mark, robot` | 5 (urgent) | on (toggle `notifyTurnEnd`) |
 | `StopFailure` | `<project> - failed` | `x, warning` | 4 (high) | on |
-| `SessionEnd` | `<project> - session closed` | `wave, robot` | 2 (low) | on |
-| `SubagentStop` | `<project> - sub-agent <name> done` | `link, robot` | 1 (min) | off |
+| `SessionEnd` | `<project> - session closed` | `wave, robot` | 2 (low) | on (toggle `notifySessionEnd`) |
+| `SubagentStop` | `<project> - sub-agent <name> done` | `link, robot` | 1 (min) | off (toggle `notifySubagent`) |
+| `PermissionRequest` | `<project> - approval` | `hand, warning` | 5 (urgent) | on (toggle `notifyApproval`) |
 
 Every notification includes:
 
-- `Click`: the topic URL on the configured server.
+- `Actions`: `copy` button to copy the `kimi --session <id>` resume command to clipboard.
 - `Markdown`: yes, so the body renders as Markdown in the ntfy app.
-- Body: the working directory, the session title, and a one-line resume
-  command (`kimi --session <id>`).
+- Body: working directory (`📁`), session title (`💬`), assistant response or status (`📢`/`❓`), and resume command (`🔗`).
 
 Sample body for `Stop`:
 
 ```text
-Kimi finished its turn in `/home/wolf/proj`.
-Session: Fix login page
-To resume: `kimi --session 01HZ...XYZ`
+📁 /home/wolf/projects/app
+💬 Fix login page
+
+📢 Todo listo sin errores.
+
+🔗 kimi --session 01HZ...XYZ
 ```
 
 The handler is fail-open: it always exits `0`, even on ntfy errors. A failure
@@ -216,7 +228,7 @@ por defecto, español opcional.
 ### Instalación
 
 ```
-/plugins install https://github.com/airvzxf/kimi-ntfy/releases/tag/v0.4.0
+/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.6.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
@@ -236,7 +248,10 @@ las reglas de ntfy: letras, números, `-` y `_`, máximo 64 caracteres.
 | `/kimi-ntfy:lang <en\|es>` | Cambia el idioma de las notificaciones. |
 | `/kimi-ntfy:server <url> [token]` | Apunta el plugin a otro servidor ntfy. |
 | `/kimi-ntfy:subagents <on\|off>` | Activa o desactiva las notificaciones de sub-agentes (default off). |
-| `/kimi-ntfy:priority <nivel>` | Sobrescribe la prioridad de ntfy para todos los eventos (`min`, `low`, `default`, `high`, `urgent`). |
+| `/kimi-ntfy:session <on\|off>` | Activa o desactiva las notificaciones de fin de sesión (`[cerrada]`, default on). |
+| `/kimi-ntfy:approval <on\|off>` | Activa o desactiva las notificaciones cuando Kimi requiere aprobación (`[aprobación]`, default on). |
+| `/kimi-ntfy:turnend <on\|off>` | Activa o desactiva las notificaciones de fin de turno (`Stop`, default on). Ponlo en `off` cuando uses cadenas largas de sub-agentes para no recibir push cada vez que un sub-agente (o el main) cierre un turno — deja `notifySessionEnd` en `on` para el push real de fin de sesión. |
+| `/kimi-ntfy:priority <nivel>` | Sobrescribe la prioridad de ntfy para todos los eventos (`min`, `low`, `default`, `high`, `urgent`, o `reset`). |
 
 ### Configuración
 
@@ -248,17 +263,24 @@ El plugin lee y escribe `~/.kimi-code/kimi-ntfy-config.json` (permisos `0600`):
   "server": "https://ntfy.sh",
   "token": "",
   "language": "es",
-  "notifySubagent": false
+  "notifySubagent": false,
+  "notifySessionEnd": true,
+  "notifyApproval": true,
+  "notifyTurnEnd": true
 }
 ```
 
 | Campo | Default | Significado |
 |---|---|---|
-| `topic` | (obligatorio) | Nombre del topic en ntfy. Se usa como ruta del POST y como `Click`. |
+| `topic` | (obligatorio) | Nombre del topic en ntfy. Se usa como ruta del POST. |
 | `server` | `https://ntfy.sh` | URL base del servidor ntfy. |
 | `token` | vacío | Bearer token enviado como `Authorization: Bearer <token>`. |
 | `language` | `en` | Cadenas de las notificaciones: `en` o `es`. |
 | `notifySubagent` | `false` | Si es `true`, dispara también en `SubagentStop`. |
+| `notifySessionEnd` | `true` | Si es `false`, silencia notificaciones en `SessionEnd` (`[cerrada]`). |
+| `notifyApproval` | `true` | Si es `true`, dispara en `PermissionRequest` (`[aprobación]`). |
+| `notifyTurnEnd` | `true` | Si es `false`, silencia todos los `Stop` (útil en cadenas largas de sub-agentes). |
+| `priority` | (sin definir) | Sobrescritura opcional de prioridad que prevalece sobre los valores por evento. |
 
 Para cambiar el idioma después de la instalación:
 

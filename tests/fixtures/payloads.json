@@ -27,5 +27,14 @@
     "client_type": "kimi_code_cli",
     "cwd": "/home/wolf/projects/app",
     "agent_name": "explore"
+  },
+  "permissionRequest": {
+    "hook_event_name": "PermissionRequest",
+    "session_id": "01HZTESTAPPROVAL",
+    "session_title": "Fix login page",
+    "client_type": "kimi_code_cli",
+    "cwd": "/home/wolf/projects/app",
+    "tool_name": "run_command",
+    "action": "npm run build"
   }
 }

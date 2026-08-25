@@ -8,7 +8,13 @@
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
-const ALLOWED_EVENTS = new Set(['Stop', 'StopFailure', 'SessionEnd', 'SubagentStop']);
+const ALLOWED_EVENTS = new Set([
+  'Stop',
+  'StopFailure',
+  'SessionEnd',
+  'SubagentStop',
+  'PermissionRequest',
+]);
 
 async function fileExists(path) {
   try {
