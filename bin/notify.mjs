@@ -8,6 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { SUPPORTED_LANGS, resolvePriority, t } from './i18n.mjs';
 
 const HOME = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
@@ -16,6 +17,29 @@ const DEFAULT_SERVER = 'https://ntfy.sh';
 
 function normalizeServer(url) {
   return url ? url.replace(/\/+$/, '') : url;
+}
+
+// Cap superior del título que se inyecta en los cuerpos de notificación,
+// en code points (no code units) para que emoji/surrogate pairs cuenten como
+// un solo carácter visible.
+export const TITLE_MAX = 78;
+export const TITLE_KEEP = 36;
+export const TITLE_SEPARATOR = ' ⟶ ';
+
+/**
+ * Recorta `title` a `TITLE_MAX` code points. Si excede el límite, devuelve
+ * `primeros TITLE_KEEP ⟶ últimos TITLE_KEEP` (75 chars totales con el
+ * separador actual). Si no excede, lo devuelve intacto. Entradas vacías o
+ * nulas se devuelven tal cual para no duplicar la lógica de fallback en
+ * `buildNotification`.
+ */
+export function truncateTitle(title) {
+  if (!title || title.length <= 0) return title;
+  const codePoints = Array.from(title);
+  if (codePoints.length <= TITLE_MAX) return title;
+  const head = codePoints.slice(0, TITLE_KEEP).join('');
+  const tail = codePoints.slice(-TITLE_KEEP).join('');
+  return `${head}${TITLE_SEPARATOR}${tail}`;
 }
 
 function findSessionDir(sessionId) {
@@ -166,7 +190,8 @@ function buildNotification(event, payload, config) {
 
   const project = payload.cwd ? payload.cwd.split('/').filter(Boolean).pop() : 'Unknown';
   const sessionId = payload.session_id || 'Unknown';
-  const sessionTitle = payload.session_title || 'Unknown';
+  const rawTitle = payload.session_title || 'Unknown';
+  const sessionTitle = truncateTitle(rawTitle);
   const agentName = payload.agent_name || 'sub-agent';
   const resumeCmd = `kimi --session ${sessionId}`;
   const topic = cfgField(config, 'topic', '');
@@ -348,4 +373,10 @@ async function main() {
   process.exit(0);
 }
 
-main();
+// Run `main()` only when invoked directly (e.g. `node bin/notify.mjs`),
+// not when the module is imported by tests or other consumers. Without this
+// guard, `import { truncateTitle } from './bin/notify.mjs'` would also fire
+// the hook handler.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main();
+}
