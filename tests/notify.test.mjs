@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { TITLE_KEEP, TITLE_MAX, TITLE_SEPARATOR, truncateTitle } from '../bin/notify.mjs';
 import payloads from './fixtures/payloads.json' with { type: 'json' };
 import { start } from './mock-ntfy.mjs';
 
@@ -484,6 +485,171 @@ test('invalid priority in config is silently ignored (per-event default applies)
     assert.equal(mock.records.length, 1);
     // Stop default is 5 (urgent) — typo must not stop notifications.
     assert.equal(mock.records[0].headers.priority, '5');
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// truncateTitle — direct unit tests for the title-truncation helper.
+// These run against the in-process export, not the spawned handler.
+// ---------------------------------------------------------------------------
+
+test('truncateTitle: undefined/null/empty pass through unchanged', () => {
+  assert.equal(truncateTitle(undefined), undefined);
+  assert.equal(truncateTitle(null), null);
+  assert.equal(truncateTitle(''), '');
+});
+
+test('truncateTitle: "Unknown" (the handler fallback) is not modified', () => {
+  assert.equal(truncateTitle('Unknown'), 'Unknown');
+});
+
+test('truncateTitle: titles of 78 code points or less are returned intact', () => {
+  const exact = 'a'.repeat(TITLE_MAX);
+  assert.equal(truncateTitle(exact), exact, '78-code-point title must be unchanged');
+  const short = 'Fix login page';
+  assert.equal(truncateTitle(short), short);
+});
+
+test('truncateTitle: 79 code points triggers the 36 + sep + 36 split', () => {
+  const input = 'a'.repeat(79);
+  const out = truncateTitle(input);
+  const expected = 'a'.repeat(TITLE_KEEP) + TITLE_SEPARATOR + 'a'.repeat(TITLE_KEEP);
+  assert.equal(out, expected, `got ${JSON.stringify(out)}`);
+  // Output length is exactly 36 + 3 + 36 = 75 regardless of input length.
+  assert.equal(Array.from(out).length, 75);
+});
+
+test('truncateTitle: very long input still produces a 75-code-point output', () => {
+  const out = truncateTitle('z'.repeat(500));
+  assert.equal(out.length, 75);
+  assert.equal(out.startsWith('z'.repeat(TITLE_KEEP)), true);
+  assert.equal(out.endsWith('z'.repeat(TITLE_KEEP)), true);
+  assert.ok(out.includes(TITLE_SEPARATOR));
+});
+
+test('truncateTitle: the user-provided example produces the expected shape', () => {
+  const input =
+    'Vamos a consolidar estos cambios vas a crear una rama, le vas a hacer commit a los cambios, ' +
+    'vas a crear un issue, vas a crear un pull request, los vas a relacionar, ' +
+    'vas a aceptar el pull request.';
+  const expected = 'Vamos a consolidar estos cambios vas ⟶ onar, vas a aceptar el pull request.';
+  const out = truncateTitle(input);
+  assert.equal(out, expected);
+  assert.equal(Array.from(out).length, 75);
+});
+
+test('truncateTitle: emoji and surrogate pairs are not split mid-codepoint', () => {
+  // 🚀 is U+1F680 (surrogate pair in UTF-16, single code point). Slicing by
+  // raw length would split a surrogate pair into "\uFFFD" — verify we don't.
+  const head = '🚀'.repeat(TITLE_KEEP);
+  const tailText = 'fin del título con texto ASCII suficiente para alcanzar 36 cps';
+  const input = head + tailText;
+  const out = truncateTitle(input);
+  // No replacement chars (U+FFFD) anywhere.
+  assert.ok(!out.includes('\uFFFD'), `split surrogate in ${JSON.stringify(out)}`);
+  // The 36 head code points must all be 🚀.
+  const first36 = Array.from(out).slice(0, TITLE_KEEP).join('');
+  assert.equal(first36, '🚀'.repeat(TITLE_KEEP));
+});
+
+test('truncateTitle: emoji at the head of the long example is preserved whole', () => {
+  const input = '🚀 Lanzar deploy ahora mismo para validar el flujo completo'.padEnd(80, 'x');
+  const out = truncateTitle(input);
+  assert.ok(out.startsWith('🚀 Lanzar deploy'), `got ${JSON.stringify(out)}`);
+});
+
+test('truncateTitle: exported constants match the documented values', () => {
+  assert.equal(TITLE_MAX, 78);
+  assert.equal(TITLE_KEEP, 36);
+  assert.equal(TITLE_SEPARATOR, ' ⟶ ');
+});
+
+// ---------------------------------------------------------------------------
+// End-to-end: notify.mjs handler must apply truncateTitle before emitting.
+// ---------------------------------------------------------------------------
+
+test('Stop with short session_title does not add a separator in the body', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url });
+    const r = await runNotify(
+      home,
+      JSON.stringify({ ...payloads.stop, session_title: 'Fix login page' }),
+    );
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    assert.ok(mock.records[0].body.includes('💬 Fix login page'), mock.records[0].body);
+    assert.ok(!mock.records[0].body.includes(' ⟶ '), mock.records[0].body);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop with very long session_title is truncated to first/last 36 with separator', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url });
+    const longTitle =
+      'Vamos a consolidar estos cambios vas a crear una rama, le vas a hacer commit a los cambios, ' +
+      'vas a crear un issue, vas a crear un pull request, los vas a relacionar, ' +
+      'vas a aceptar el pull request.';
+    const r = await runNotify(home, JSON.stringify({ ...payloads.stop, session_title: longTitle }));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    const body = mock.records[0].body;
+    assert.ok(body.includes('Vamos a consolidar estos cambios vas'), body);
+    assert.ok(body.includes('onar, vas a aceptar el pull request.'), body);
+    assert.ok(body.includes(' ⟶ '), body);
+    // Extract the line that follows the 💬 prefix and assert its length.
+    const line = body.split('\n').find((l) => l.startsWith('💬 ')) ?? '';
+    const titleInBody = line.slice('💬 '.length);
+    const cpLength = Array.from(titleInBody).length;
+    assert.ok(cpLength <= 78, `title line was ${cpLength} code points: ${titleInBody}`);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop with 79-character session_title triggers the truncation', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url });
+    const r = await runNotify(
+      home,
+      JSON.stringify({ ...payloads.stop, session_title: 'a'.repeat(79) }),
+    );
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    const expected = 'a'.repeat(TITLE_KEEP) + TITLE_SEPARATOR + 'a'.repeat(TITLE_KEEP);
+    assert.ok(mock.records[0].body.includes(expected), mock.records[0].body);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop with emoji in session_title keeps the emoji intact across truncation', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url });
+    const title = '🚀 Lanzar deploy ahora mismo para validar el flujo completo'.padEnd(120, 'x');
+    const r = await runNotify(home, JSON.stringify({ ...payloads.stop, session_title: title }));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    const body = mock.records[0].body;
+    // The 🚀 glyph survives at the head — no replacement char.
+    assert.ok(!body.includes('\uFFFD'), `body had replacement chars: ${body}`);
+    assert.ok(body.includes('🚀 Lanzar deploy'), body);
+    assert.ok(body.includes(' ⟶ '), body);
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });
