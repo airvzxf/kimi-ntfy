@@ -4,12 +4,20 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { TITLE_KEEP, TITLE_MAX, TITLE_SEPARATOR, truncateTitle } from '../bin/notify.mjs';
+import {
+  DEFAULT_LOG_PATH,
+  TITLE_KEEP,
+  TITLE_MAX,
+  TITLE_SEPARATOR,
+  logEvent,
+  truncateTitle,
+} from '../bin/notify.mjs';
 import payloads from './fixtures/payloads.json' with { type: 'json' };
 import { start } from './mock-ntfy.mjs';
 
@@ -655,3 +663,266 @@ test('Stop with emoji in session_title keeps the emoji intact across truncation'
     await rm(home, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Persistent diagnostic log. The handler writes append-only to
+// $KIMI_CODE_HOME/logs/kimi-ntfy.log with the same shape as
+// ~/.kimi-code/logs/kimi-code.log. Tests pass KIMI_NTFY_LOG=<tmp> to keep
+// the user's real log file untouched.
+// ---------------------------------------------------------------------------
+
+test('logEvent: writes an ISO-timestamped line with LEVEL, event, and key=value fields', () => {
+  const tmp = join(
+    tmpdir(),
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+  );
+  try {
+    process.env.KIMI_NTFY_LOG = tmp;
+    logEvent('info', 'invoke', { event: 'Stop', sid: 'session_abc', agent: 'main' });
+    const line = readFileSync(tmp, 'utf8').trimEnd();
+    assert.match(
+      line,
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z INFO {1,2}invoke {2,}event=Stop sid=session_abc agent=main$/,
+    );
+  } finally {
+    Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+    rm(tmp, { force: true });
+  }
+});
+
+test('logEvent: collapses whitespace and newlines in field values to one log line', () => {
+  const tmp = join(
+    tmpdir(),
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+  );
+  try {
+    process.env.KIMI_NTFY_LOG = tmp;
+    logEvent('info', 'probe', { msg: 'hello   world\nNEWLINE HERE', multi: 'a\tb' });
+    const content = readFileSync(tmp, 'utf8');
+    assert.equal(content.split('\n').filter(Boolean).length, 1);
+    assert.ok(!content.includes('\nNEWLINE'));
+    assert.ok(content.includes('hello_world_NEWLINE_HERE'));
+    assert.ok(content.includes('a_b'));
+  } finally {
+    Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+    rm(tmp, { force: true });
+  }
+});
+
+test('logEvent: creates the parent directory if missing', () => {
+  const root = join(
+    tmpdir(),
+    `kimi-ntfy-logdir-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  const target = join(root, 'a', 'b', 'c', 'notify.log');
+  try {
+    process.env.KIMI_NTFY_LOG = target;
+    logEvent('info', 'mkdir_test', { x: 1 });
+    assert.ok(existsSync(target), `target missing at ${target}`);
+    const content = readFileSync(target, 'utf8');
+    assert.ok(content.includes('mkdir_test'));
+    assert.ok(content.includes('x=1'));
+  } finally {
+    Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+    rm(root, { recursive: true, force: true });
+  }
+});
+
+test('logEvent: KIMI_NTFY_LOG=disable writes nothing', () => {
+  const tmp = join(
+    tmpdir(),
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+  );
+  try {
+    process.env.KIMI_NTFY_LOG = 'disable';
+    logEvent('info', 'should_not_appear', { x: 1 });
+    assert.equal(existsSync(tmp), false, 'no file should be created when disabled');
+  } finally {
+    Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+    rm(tmp, { force: true });
+  }
+});
+
+test('logEvent: writes mode 0600', async () => {
+  const tmp = join(
+    tmpdir(),
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+  );
+  try {
+    process.env.KIMI_NTFY_LOG = tmp;
+    logEvent('info', 'permission', { mode: '0600' });
+    const st = await stat(tmp);
+    assert.equal(st.mode & 0o777, 0o600, `mode is ${(st.mode & 0o777).toString(8)}`);
+  } finally {
+    Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+    rm(tmp, { force: true });
+  }
+});
+
+test('logEvent: truncates fields longer than 256 chars to keep one line per event', () => {
+  const tmp = join(
+    tmpdir(),
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+  );
+  try {
+    process.env.KIMI_NTFY_LOG = tmp;
+    const huge = 'x'.repeat(1000);
+    logEvent('info', 'truncate', { msg: huge });
+    const content = readFileSync(tmp, 'utf8');
+    assert.equal(content.split('\n').filter(Boolean).length, 1);
+    const xrun = content.match(/x+/)?.[0].length ?? 0;
+    assert.ok(xrun <= 256, `expected <= 256 x's, got ${xrun}`);
+  } finally {
+    Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+    rm(tmp, { force: true });
+  }
+});
+
+test('DEFAULT_LOG_PATH is under $KIMI_CODE_HOME/logs/kimi-ntfy.log', () => {
+  assert.ok(
+    DEFAULT_LOG_PATH.endsWith('logs/kimi-ntfy.log'),
+    `expected suffix logs/kimi-ntfy.log, got ${DEFAULT_LOG_PATH}`,
+  );
+});
+
+test('handler honors KIMI_CODE_HOME for the default log path', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+  try {
+    await seed(home, {
+      topic: 'mytopic',
+      server: mock.url,
+      notifyTurnEnd: true,
+      settleAttempts: 0,
+    });
+    const r = await runNotifyWithEnv(home, JSON.stringify(payloads.stop), {
+      ...process.env,
+      KIMI_CODE_HOME: home,
+    });
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    const expectedFile = join(home, 'logs', 'kimi-ntfy.log');
+    const st = await stat(expectedFile);
+    assert.ok(st.size > 0, `expected log file at ${expectedFile} to be non-empty`);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop silenced by settle_check writes settle + exit lines', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  const logFile = join(home, 'kimi-ntfy.log');
+  const sessionDir = join(home, 'sessions', 'wd_test', 'session_busy_log', 'agents', 'main');
+  try {
+    await seed(home, {
+      topic: 'mytopic',
+      server: mock.url,
+      notifyTurnEnd: true,
+      settleAttempts: 0,
+    });
+    await mkdir(sessionDir, { recursive: true });
+    const wireContent = [
+      JSON.stringify({ event: { type: 'tool.call', toolCall: { name: 'Agent' } } }),
+      JSON.stringify({ event: { type: 'step.end', finishReason: 'tool_use' } }),
+    ].join('\n');
+    await writeFile(join(sessionDir, 'wire.jsonl'), wireContent);
+
+    const r = await runNotifyWithEnv(
+      home,
+      JSON.stringify({
+        hook_event_name: 'Stop',
+        session_id: 'session_busy_log',
+        cwd: '/home/wolf/test',
+      }),
+      { ...process.env, KIMI_CODE_HOME: home, KIMI_NTFY_LOG: logFile },
+    );
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0, 'busy main agent should silence Stop');
+    const content = await readFile(logFile, 'utf8');
+    assert.ok(content.includes('settle'), `expected a settle line, got:\n${content}`);
+    assert.ok(content.includes('sid=session_busy_log'), content);
+    assert.ok(content.includes('result=false'), content);
+    assert.ok(content.includes('pending_tool_calls='), content);
+    assert.ok(content.includes('last_finish_reason=tool_use'), content);
+    assert.ok(content.includes('path=settle_silenced'), content);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop normal flow writes invoke + settle result=true + notify + exit path=ok', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  const logFile = join(home, 'kimi-ntfy.log');
+  try {
+    await seed(home, {
+      topic: 'mytopic',
+      server: mock.url,
+      notifyTurnEnd: true,
+      settleAttempts: 0,
+    });
+    const r = await runNotifyWithEnv(home, JSON.stringify(payloads.stop), {
+      ...process.env,
+      KIMI_CODE_HOME: home,
+      KIMI_NTFY_LOG: logFile,
+    });
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    const content = await readFile(logFile, 'utf8');
+    assert.ok(content.includes('invoke'), content);
+    assert.ok(content.includes('event=Stop'), content);
+    assert.ok(content.includes('settle'), content);
+    assert.ok(content.includes('result=true'), content);
+    assert.ok(content.includes('notify'), content);
+    assert.ok(content.includes('status='), content);
+    assert.ok(content.includes('path=ok'), content);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('Stop silenced by notifyTurnEnd=false writes filter reason=notifyTurnEnd + exit path=filter_silenced', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  const logFile = join(home, 'kimi-ntfy.log');
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url, notifyTurnEnd: false });
+    const r = await runNotifyWithEnv(home, JSON.stringify(payloads.stop), {
+      ...process.env,
+      KIMI_CODE_HOME: home,
+      KIMI_NTFY_LOG: logFile,
+    });
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0);
+    const content = await readFile(logFile, 'utf8');
+    assert.ok(content.includes('filter'), content);
+    assert.ok(content.includes('reason=notifyTurnEnd'), content);
+    assert.ok(content.includes('event=Stop'), content);
+    assert.ok(content.includes('path=filter_silenced'), content);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+async function runNotifyWithEnv(home, stdinText, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('node', [NOTIFY], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => {
+      stdout += d.toString('utf8');
+    });
+    child.stderr.on('data', (d) => {
+      stderr += d.toString('utf8');
+    });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+    child.stdin.end(stdinText);
+  });
+}

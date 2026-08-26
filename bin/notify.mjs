@@ -3,10 +3,18 @@
 // Hook handler: lee el evento del stdin, decide tipo de notificación, POST a ntfy.sh.
 // Idioma y toggle de sub-agentes se leen de ~/.kimi-code/kimi-ntfy-config.json.
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+} from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { SUPPORTED_LANGS, resolvePriority, t } from './i18n.mjs';
@@ -15,8 +23,71 @@ const HOME = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
 const CONFIG_PATH = join(HOME, 'kimi-ntfy-config.json');
 const DEFAULT_SERVER = 'https://ntfy.sh';
 
+// Log persistente de diagnóstico. Sigue la convención de Kimi Code:
+// todos los logs viven en $KIMI_CODE_HOME/logs/. Mismo formato que
+// `kimi-code.log` (ISO-timestamp + LEVEL + event + key=value). Override
+// con `KIMI_NTFY_LOG=<ruta>`; desactivar con `KIMI_NTFY_LOG=disable` /
+// `=off`. Rotación: rename atómico a `<path>.1` al pasar 10 MB; un solo
+// histórico, concurrencia benigna.
+const LOG_ROTATE_BYTES = 10 * 1024 * 1024;
+export const DEFAULT_LOG_PATH = join(HOME, 'logs', 'kimi-ntfy.log');
+
 function normalizeServer(url) {
   return url ? url.replace(/\/+$/, '') : url;
+}
+
+/**
+ * Append one ASCII line to the diagnostic log. Fail-open: a broken log
+ * file is reported once on stderr and never propagates. No-op when
+ * `KIMI_NTFY_LOG=disable` or `=off`.
+ *
+ * Format matches `kimi-code.log` (per Kimi Code's data-locations convention):
+ *   2026-08-26T01:23:45.123Z INFO  invoke   event=Stop sid=session_…
+ *
+ * @param {'info'|'error'} level
+ * @param {string} event   short event name (e.g. 'invoke', 'filter', 'settle')
+ * @param {Record<string, string|number|boolean|null|undefined>} fields
+ */
+export function logEvent(level, event, fields = {}) {
+  try {
+    const override = process.env.KIMI_NTFY_LOG;
+    if (override === 'disable' || override === 'off') return;
+    const path = override && override !== '' ? override : DEFAULT_LOG_PATH;
+    const ts = new Date().toISOString();
+    const parts = Object.entries(fields)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => `${k}=${formatField(v)}`)
+      .join(' ');
+    const line = `${ts} ${level.toUpperCase()} ${event.padEnd(8)} ${parts}\n`;
+    mkdirSync(dirname(path), { recursive: true });
+    rotateLogIfNeeded(path);
+    appendFileSync(path, line, { mode: 0o600 });
+  } catch (err) {
+    process.stderr.write(`[kimi-ntfy log] write failed: ${err.message}\n`);
+  }
+}
+
+function formatField(v) {
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  // Replace any whitespace + non-printables so we keep one log line per event.
+  return String(v).replace(/\s+/g, '_').slice(0, 256);
+}
+
+function rotateLogIfNeeded(path) {
+  let st;
+  try {
+    st = statSync(path);
+  } catch {
+    return; // first write will create it
+  }
+  if (st.size < LOG_ROTATE_BYTES) return;
+  const hist = `${path}.1`;
+  try {
+    renameSync(hist, `${hist}.old`);
+  } catch {}
+  try {
+    renameSync(path, hist);
+  } catch {}
 }
 
 // Cap superior del título que se inyecta en los cuerpos de notificación,
@@ -60,12 +131,12 @@ function findSessionDir(sessionId) {
 
 function checkMainAgentIdle(sessionDir) {
   const mainWire = join(sessionDir, 'agents', 'main', 'wire.jsonl');
-  if (!existsSync(mainWire)) return true;
+  if (!existsSync(mainWire)) return { settled: true, pendingToolCalls: 0, lastFinishReason: null };
 
   try {
     const content = readFileSync(mainWire, 'utf-8');
     const lines = content.trim().split('\n').filter(Boolean);
-    if (lines.length === 0) return true;
+    if (lines.length === 0) return { settled: true, pendingToolCalls: 0, lastFinishReason: null };
 
     let pendingToolCalls = 0;
     let lastFinishReason = null;
@@ -84,26 +155,35 @@ function checkMainAgentIdle(sessionDir) {
       } catch {}
     }
 
-    if (pendingToolCalls > 0) return false;
-    if (lastFinishReason === 'tool_use' || lastFinishReason === 'tool_calls') return false;
-    return true;
+    const settled =
+      pendingToolCalls === 0 &&
+      lastFinishReason !== 'tool_use' &&
+      lastFinishReason !== 'tool_calls';
+    return { settled, pendingToolCalls, lastFinishReason };
   } catch {
-    return true;
+    return { settled: true, pendingToolCalls: 0, lastFinishReason: null };
   }
 }
 
 async function verifySettledStop(sessionId, config) {
   // En ambiente de tests o si no es un sessionId con formato real, no retrasar
   if (process.env.NODE_ENV === 'test' || !sessionId || !sessionId.startsWith('session_')) {
-    return true;
+    return { settled: true, pendingToolCalls: 0, lastFinishReason: null, attempts: 0 };
   }
 
   const sessionDir = findSessionDir(sessionId);
-  if (!sessionDir) return true;
+  if (!sessionDir)
+    return { settled: true, pendingToolCalls: 0, lastFinishReason: null, attempts: 0 };
 
   // Verificación 1: ¿main está ocupado ahora mismo con herramientas o subagentes?
-  if (!checkMainAgentIdle(sessionDir)) {
-    return false;
+  const idle = checkMainAgentIdle(sessionDir);
+  if (!idle.settled) {
+    return {
+      settled: false,
+      pendingToolCalls: idle.pendingToolCalls,
+      lastFinishReason: idle.lastFinishReason,
+      attempts: 0,
+    };
   }
 
   // Loop de verificación y reposo (2 intentos de 2.5s = ~5s total de asentamiento)
@@ -112,13 +192,18 @@ async function verifySettledStop(sessionId, config) {
 
   for (let i = 0; i < attempts; i++) {
     await sleep(intervalMs);
-    // Si durante la espera main lanzó otra herramienta o subagente, descartar Stop
-    if (!checkMainAgentIdle(sessionDir)) {
-      return false;
+    const after = checkMainAgentIdle(sessionDir);
+    if (!after.settled) {
+      return {
+        settled: false,
+        pendingToolCalls: after.pendingToolCalls,
+        lastFinishReason: after.lastFinishReason,
+        attempts: i + 1,
+      };
     }
   }
 
-  return true;
+  return { settled: true, pendingToolCalls: 0, lastFinishReason: idle.lastFinishReason, attempts };
 }
 
 async function readStdin() {
@@ -283,8 +368,16 @@ async function main() {
   } catch (err) {
     const lang = 'en';
     process.stderr.write(`${t(lang).badStdin(err.message)}\n`);
+    logEvent('info', 'exit', { code: 0, path: 'bad_stdin', error: err.message });
     process.exit(0);
   }
+
+  const event = payload.hook_event_name;
+  logEvent('info', 'invoke', {
+    event,
+    sid: payload.session_id,
+    agent: payload.agent_name,
+  });
 
   const config = await readConfig();
   const candidateLang = config?.language;
@@ -292,18 +385,25 @@ async function main() {
   const s = t(lang);
 
   if (!config || !config.topic) {
+    logEvent('info', 'config', { status: !config ? 'missing' : 'no_topic' });
+    logEvent('info', 'exit', { code: 0, path: 'no_config' });
     process.stderr.write(`${s.noConfigStderr}\n`);
     process.exit(0);
   }
 
+  logEvent('info', 'config', { status: 'loaded', topic: config.topic });
+
   // Toggle de fin de turno: si está apagado y el evento es Stop, salir silencioso.
-  const event = payload.hook_event_name;
   if (event === 'Stop' && !cfgField(config, 'notifyTurnEnd', true)) {
+    logEvent('info', 'filter', { reason: 'notifyTurnEnd', event });
+    logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
     process.exit(0);
   }
 
   // Toggle de sub-agentes: si está apagado y el evento es SubagentStop, salir silencioso.
   if (event === 'SubagentStop' && !cfgField(config, 'notifySubagent', false)) {
+    logEvent('info', 'filter', { reason: 'notifySubagent', event });
+    logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
     process.exit(0);
   }
 
@@ -314,29 +414,44 @@ async function main() {
     payload.agent_name !== 'main' &&
     !cfgField(config, 'notifySubagent', false)
   ) {
+    logEvent('info', 'filter', { reason: 'notifySubagent', event, agent: payload.agent_name });
+    logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
     process.exit(0);
   }
 
   // Toggle de fin de sesión: si está apagado y el evento es SessionEnd, salir silencioso.
   if (event === 'SessionEnd' && !cfgField(config, 'notifySessionEnd', true)) {
+    logEvent('info', 'filter', { reason: 'notifySessionEnd', event });
+    logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
     process.exit(0);
   }
 
   // Toggle de aprobación/permiso: si está apagado y el evento es PermissionRequest, salir silencioso.
   if (event === 'PermissionRequest' && !cfgField(config, 'notifyApproval', true)) {
+    logEvent('info', 'filter', { reason: 'notifyApproval', event });
+    logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
     process.exit(0);
   }
 
   // Para eventos Stop: verificar que el agente principal no tenga herramientas activas y esté asentado
   if (event === 'Stop') {
-    const isSettled = await verifySettledStop(payload.session_id, config);
-    if (!isSettled) {
+    const verdict = await verifySettledStop(payload.session_id, config);
+    logEvent('info', 'settle', {
+      sid: payload.session_id,
+      result: verdict.settled ? 'true' : 'false',
+      pending_tool_calls: verdict.pendingToolCalls,
+      last_finish_reason: verdict.lastFinishReason ?? 'null',
+      attempts: verdict.attempts,
+    });
+    if (!verdict.settled) {
+      logEvent('info', 'exit', { code: 0, path: 'settle_silenced' });
       process.exit(0);
     }
   }
 
   const note = buildNotification(event, payload, config);
   if (!note) {
+    logEvent('info', 'exit', { code: 0, path: 'unknown_event', event });
     process.exit(0);
   }
 
@@ -364,12 +479,17 @@ async function main() {
 
   try {
     const res = await fetch(url, { method: 'POST', headers, body: note.message });
-    if (!res.ok) {
+    if (res.ok) {
+      logEvent('info', 'notify', { event, status: res.status });
+    } else {
+      logEvent('error', 'notify', { event, status: res.status });
       process.stderr.write(`${s.ntfyError(res.status)}\n`);
     }
   } catch (err) {
+    logEvent('error', 'notify', { event, error: err.message });
     process.stderr.write(`${s.fetchError(err.message)}\n`);
   }
+  logEvent('info', 'exit', { code: 0, path: 'ok' });
   process.exit(0);
 }
 
