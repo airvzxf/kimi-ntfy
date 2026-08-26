@@ -2,6 +2,83 @@
 
 All notable changes to kimi-ntfy are documented in this file.
 
+## [0.7.0] - 2026-08-26
+
+### Added
+- Diagnostic log surface. Every hook invocation writes a JSONL trail
+  (one self-contained JSON object per line) to
+  `~/.kimi-code/logs/kimi-ntfy.jsonl`. The file follows Kimi Code's
+  `data-locations` convention (all logs under `$KIMI_CODE_HOME/logs/`)
+  and is the same convention used by `~/.kimi-code/logs/kimi-code.log`.
+  Each line carries `ts` (ISO-8601 with milliseconds + Z), `level`
+  (`info` / `error` / `fatal`), `event` (one of `invoke`, `config`,
+  `filter`, `settle`, `notify`, `exit`), plus caller fields like
+  `hook_event`, `sid`, `agent`, `cwd`, `pending_tool_calls`,
+  `last_finish_reason`, `reason`, `status`, `error_message`, and `path`.
+  The `exit` event summarises the outcome in its `path` field
+  (`ok`, `settle_silenced`, `filter_silenced`, `no_config`,
+  `bad_stdin`, `unknown_event`, `notify_error`).
+
+- POSIX-aligned streaming. INFO events are emitted to `process.stdout`
+  and ERROR/FATAL to `process.stderr`. Kimi Code already captures
+  both into per-task `output.log`, so the streams are observable
+  without extra wiring. The shell-redirect pattern
+  `<app> 1> <app>.stdout.jsonl 2> <app>.stderr.jsonl` works directly
+  against the handler.
+
+- Override knobs. `KIMI_NTFY_LOG=<path>` redirects the persisted
+  file (tests + power users), `=disable` writes nothing to disk but
+  keeps the streams, `=silent` suppresses everything (used by
+  `node --test`). Rotation still at 10 MB → rename `.jsonl` →
+  `.jsonl.1`.
+
+- New `/kimi-ntfy:session_title` cap. The session title in the body
+  (`💬` line) is capped at 78 code points; titles longer than that are
+  truncated to `first 36 ⟶ last 36` (75 chars total). Code points are
+  counted, so emoji / surrogate pairs are preserved intact. Inspired
+  by the user's preference not to use a Title ID until Kimi Code
+  exposes one.
+
+- New `kimi-ntfy-cli version` subcommand (with `-v` and `--version`
+  aliases) prints the plugin version out of `package.json`. Useful
+  when filing bug reports.
+
+### Changed
+- Tail-only reads on `wire.jsonl`. `checkMainAgentIdle` and
+  `getLastAssistantText` no longer `readFileSync` the entire wire;
+  a new `readTail` helper seeks to the last 16–32 KB. For a 2 MB
+  wire the handler now completes verification well under 200 ms
+  (perf-guarantee test in the suite).
+- `subagentResponse` is truncated identically to `assistantText`
+  (`RESPONSE_MAX = 3000` chars, marker `*(Truncated)*`). Previously
+  it could exceed ntfy's body limit and trigger a silent 4xx.
+- `findSessionDir` is computed once per invocation and reused by
+  both `verifySettledStop` and `buildNotification` (saves a
+  `readdirSync` + `existsSync` walk per Stop event).
+- JSON parse errors from a malformed `kimi-ntfy-config.json` are
+  now surfaced as an `event:"config" status:"invalid_parse"` log
+  line with the underlying SyntaxError, instead of being silently
+  treated as "no config".
+- Strict log event types. The internal `formatField` helper that
+  silently coerced objects to `'[object Object]'` is gone; the
+  switch to `JSON.stringify` makes non-serialisable inputs surface
+  as a stderr marker line.
+
+### Removed
+- The ASCII `key=value` log format from v0.7.x development. The
+  shape `<ts> <LEVEL> <event-padded> <key=value>` is replaced by
+  JSONL; consumers should migrate any `grep`-based scripts to
+  `jq`.
+- Dead variable `topicUrl` in `buildNotification` (was never read).
+
+### Fixed
+- Subagent responses over the ntfy body limit (default 4 KB on
+  ntfy.sh) are now truncated with a marker instead of producing a
+  silent 4xx from the server.
+- Disabling all output during test runs is now possible via
+  `KIMI_NTFY_LOG=silent`, removing log noise from `node --test`
+  output without changing the handler code path.
+
 ## [0.6.0] - 2026-08-25
 
 ### Added

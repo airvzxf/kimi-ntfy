@@ -1,6 +1,6 @@
 {
   "name": "kimi-ntfy",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Push notifications via ntfy.sh when a Kimi Code session, turn or sub-agent ends. English by default; Spanish optional. Self-hosted server supported.",
   "keywords": ["notification", "ntfy", "push", "hook", "i18n"],
   "author": "Israel Roldan",

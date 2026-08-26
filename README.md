@@ -1,7 +1,7 @@
 # kimi-ntfy
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![Version: 0.6.0](https://img.shields.io/badge/version-0.6.0-blue.svg)](kimi.plugin.json)
+[![Version: 0.7.0](https://img.shields.io/badge/version-0.7.0-blue.svg)](kimi.plugin.json)
 [![CI](https://github.com/airvzxf/kimi-ntfy/actions/workflows/validate.yml/badge.svg)](https://github.com/airvzxf/kimi-ntfy/actions/workflows/validate.yml)
 
 Kimi Code plugin that pushes a notification to [ntfy.sh](https://ntfy.sh) when the
@@ -24,7 +24,7 @@ Spanish optional.
 ## Install
 
 ```
-/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.6.0
+/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.7.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
@@ -301,7 +301,7 @@ por defecto, español opcional.
 ### Instalación
 
 ```
-/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.6.0
+/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.7.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
