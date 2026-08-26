@@ -172,6 +172,79 @@ Sample body for `Stop`:
 The handler is fail-open: it always exits `0`, even on ntfy errors. A failure
 writes one line to `stderr` and never blocks the agent's turn.
 
+## Diagnostics
+
+Every hook invocation writes a JSONL trail — one self-contained JSON
+object per line — to:
+
+```
+~/.kimi-code/logs/kimi-ntfy.jsonl
+```
+
+The format mirrors `kimi-code.log` in location (Kimi Code's
+`data-locations` convention: all logs under `$KIMI_CODE_HOME/logs/`) but
+uses JSON Lines so every line is `jq`-, `grep`-, and pipeline-friendly.
+
+```bash
+# Tail the most recent decisions.
+tail -F ~/.kimi-code/logs/kimi-ntfy.jsonl | jq -c .
+
+# Filter to a single session.
+grep "$(jq -r .session_id ~/.kimi-code/sessions/<you>/<sid>/state.json)" \
+  ~/.kimi-code/logs/kimi-ntfy.jsonl | jq -c .
+
+# Count how many Stops were silenced by settle-check last week.
+jq -c 'select(.event=="settle" and .result==false)' \
+  ~/.kimi-code/logs/kimi-ntfy.jsonl | wc -l
+```
+
+Event names you'll see in `event`:
+`invoke`, `config`, `filter`, `settle`, `notify`, `exit`. The `exit`
+event always carries a `path` field with one of `ok`, `settle_silenced`,
+`filter_silenced`, `no_config`, `bad_stdin`, `unknown_event`,
+`notify_error` — a single grep shows what happened to any given
+invocation.
+
+### Channels
+
+INFO events go to `stdout`. ERROR and FATAL events go to `stderr`.
+This mirrors the POSIX convention
+`<app> 1> <app>.stdout.jsonl 2> <app>.stderr.jsonl`. Both streams are
+captured by Kimi Code into per-task `output.log` automatically — no
+extra wiring needed.
+
+The persisted file above collects **all** events regardless of level,
+for users who don't want to grep through `sessions/<id>/...`.
+
+### Overrides
+
+| `KIMI_NTFY_LOG=…` | Effect |
+|---|---|
+| unset / empty | write to default path |
+| `/some/file.jsonl` | write to that path instead |
+| `disable` | skip the file; streams still emit |
+| `silent` | suppress everything (useful for `node --test`) |
+
+### Rotation
+
+The persisted file rotates to `<path>.1` once it crosses 10 MB,
+overwriting the previous `.1`. One historical file kept. Concurrency
+between simultaneous handler invocations is benign: a second handler
+sees `EEXIST` on the rename and writes to the freshly recreated active
+file — the log keeps working, only the atomic rotation is lost.
+
+### Format reference
+
+```json
+{"ts":"2026-08-26T01:23:45.123Z","level":"info","event":"invoke","hook_event":"Stop","sid":"session_…","agent":"main","cwd":"/tmp"}
+{"ts":"2026-08-26T01:23:46.012Z","level":"info","event":"settle","sid":"session_…","result":false,"pending_tool_calls":2,"last_finish_reason":"tool_use","attempts":0}
+{"ts":"2026-08-26T01:23:48.678Z","level":"info","event":"exit","code":0,"path":"ok"}
+```
+
+Reserved fields at the JSON root: `ts`, `level`, `event`. Anything the
+handler attaches (`hook_event`, `sid`, `agent`, `cwd`, `pending_tool_calls`,
+`reason`, `error_message`, …) sits at the same level.
+
 ## Development
 
 ```bash

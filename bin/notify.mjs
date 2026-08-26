@@ -5,9 +5,12 @@
 
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   renameSync,
   statSync,
@@ -23,54 +26,97 @@ const HOME = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
 const CONFIG_PATH = join(HOME, 'kimi-ntfy-config.json');
 const DEFAULT_SERVER = 'https://ntfy.sh';
 
-// Log persistente de diagnóstico. Sigue la convención de Kimi Code:
-// todos los logs viven en $KIMI_CODE_HOME/logs/. Mismo formato que
-// `kimi-code.log` (ISO-timestamp + LEVEL + event + key=value). Override
-// con `KIMI_NTFY_LOG=<ruta>`; desactivar con `KIMI_NTFY_LOG=disable` /
-// `=off`. Rotación: rename atómico a `<path>.1` al pasar 10 MB; un solo
-// histórico, concurrencia benigna.
+// Persistent diagnostic log. Conforms to Kimi Code's data-locations
+// convention: all logs live under $KIMI_CODE_HOME/logs/. JSONL format
+// (one self-contained JSON object per line), aligned with the POSIX
+// pattern <app> 1> <app>.stdout.jsonl 2> <app>.stderr.jsonl:
+//   - INFO events go to stdout + (optionally) the persisted file.
+//   - ERROR / FATAL events go to stderr + the persisted file.
+//
+// Override the file path with `KIMI_NTFY_LOG=<path>`. Disable the file
+// with `=disable`. Silence everything (useful for `node --test`) with
+// `=silent`. The shell-redirection pattern is left to the caller — Kimi
+// Code already captures each hook's output to per-task `output.log`.
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024;
-export const DEFAULT_LOG_PATH = join(HOME, 'logs', 'kimi-ntfy.log');
+export const DEFAULT_LOG_PATH = join(HOME, 'logs', 'kimi-ntfy.jsonl');
+
+// Cap of body text passed to ntfy. Stays well below the 4 KB request
+// limit of most ntfy servers (ntfy.sh default). Marker `*(Truncated)*`
+// renders italic in ntfy's Markdown viewer.
+export const RESPONSE_MAX = 3000;
+
+function truncateForNtfy(text) {
+  const safe = typeof text === 'string' ? text : String(text ?? '');
+  if (safe.length <= RESPONSE_MAX) return safe;
+  return `${safe.slice(0, RESPONSE_MAX)}...\n\n*(Truncated)*`;
+}
 
 function normalizeServer(url) {
   return url ? url.replace(/\/+$/, '') : url;
 }
 
-/**
- * Append one ASCII line to the diagnostic log. Fail-open: a broken log
- * file is reported once on stderr and never propagates. No-op when
- * `KIMI_NTFY_LOG=disable` or `=off`.
- *
- * Format matches `kimi-code.log` (per Kimi Code's data-locations convention):
- *   2026-08-26T01:23:45.123Z INFO  invoke   event=Stop sid=session_…
- *
- * @param {'info'|'error'} level
- * @param {string} event   short event name (e.g. 'invoke', 'filter', 'settle')
- * @param {Record<string, string|number|boolean|null|undefined>} fields
- */
-export function logEvent(level, event, fields = {}) {
-  try {
-    const override = process.env.KIMI_NTFY_LOG;
-    if (override === 'disable' || override === 'off') return;
-    const path = override && override !== '' ? override : DEFAULT_LOG_PATH;
-    const ts = new Date().toISOString();
-    const parts = Object.entries(fields)
-      .filter(([, v]) => v !== undefined && v !== null)
-      .map(([k, v]) => `${k}=${formatField(v)}`)
-      .join(' ');
-    const line = `${ts} ${level.toUpperCase()} ${event.padEnd(8)} ${parts}\n`;
-    mkdirSync(dirname(path), { recursive: true });
-    rotateLogIfNeeded(path);
-    appendFileSync(path, line, { mode: 0o600 });
-  } catch (err) {
-    process.stderr.write(`[kimi-ntfy log] write failed: ${err.message}\n`);
-  }
+function resolveLogPath() {
+  const v = process.env.KIMI_NTFY_LOG;
+  if (v === undefined || v === '') return { enabled: true, path: DEFAULT_LOG_PATH, silent: false };
+  if (v === 'silent') return { enabled: false, path: null, silent: true };
+  if (v === 'disable') return { enabled: false, path: null, silent: false };
+  return { enabled: true, path: v, silent: false };
 }
 
-function formatField(v) {
-  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
-  // Replace any whitespace + non-printables so we keep one log line per event.
-  return String(v).replace(/\s+/g, '_').slice(0, 256);
+/**
+ * Append one JSON line to the diagnostic log. Emits to either
+ * `process.stdout` (level='info') or `process.stderr`
+ * (level='error'/'fatal') and additionally to a persisted aggregate file
+ * at `DEFAULT_LOG_PATH` (or `KIMI_NTFY_LOG`).
+ *
+ * Format: one JSON object per line, terminated by `\n`. Fields given
+ * via `fields` are spread into the top-level JSON object, so callers
+ * cannot accidentally collide with reserved keys (`ts`, `level`,
+ * `event`) at the JSON layer. Caller's `event` key (e.g. `hook_event`)
+ * is fine.
+ *
+ * Fail-open: any error from disk or stream I/O is swallowed (a single
+ * one-shot warning is emitted on a *separate* marker line, not via the
+ * log path, to avoid recursion).
+ *
+ * @param {'info'|'error'|'fatal'} level
+ * @param {string} event   short log-event name (e.g. 'invoke', 'filter')
+ * @param {Record<string, *>=} fields   additional structured fields
+ */
+export function logEvent(level, event, fields = {}) {
+  // 1. Build the line.
+  let line;
+  try {
+    line = `${JSON.stringify({ ts: new Date().toISOString(), level, event, ...fields })}\n`;
+  } catch (err) {
+    process.stderr.write(`[kimi-ntfy log] serialise failed: ${err.message}\n`);
+    return;
+  }
+
+  // 2. Honour KIMI_NTFY_LOG=silent (suppress everything).
+  const cfg = resolveLogPath();
+  if (cfg.silent) return;
+
+  // 3. Stream emission. INFO → stdout, ERROR/FATAL → stderr.
+  const stream = level === 'info' ? process.stdout : process.stderr;
+  try {
+    stream.write(line);
+  } catch {
+    // Stream errors are non-actionable here — node closes on exit.
+  }
+
+  // 4. Persisted file.
+  if (!cfg.enabled || !cfg.path) return;
+  try {
+    mkdirSync(dirname(cfg.path), { recursive: true });
+    rotateLogIfNeeded(cfg.path);
+    appendFileSync(cfg.path, line, { mode: 0o600 });
+  } catch (err) {
+    if (!logEvent._warned) {
+      process.stderr.write(`[kimi-ntfy log] persistent write failed: ${err.message}\n`);
+      logEvent._warned = true;
+    }
+  }
 }
 
 function rotateLogIfNeeded(path) {
@@ -88,6 +134,26 @@ function rotateLogIfNeeded(path) {
   try {
     renameSync(path, hist);
   } catch {}
+}
+
+/**
+ * Read only the last `maxBytes` of a text file. Avoids loading multi-MB
+ * wire.jsonl just to look at the most recent 40 events.
+ */
+function readTail(path, maxBytes = 8192) {
+  const st = statSync(path);
+  const start = Math.max(0, st.size - maxBytes);
+  const len = st.size - start;
+  const fd = openSync(path, 'r');
+  try {
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, start);
+    return buf.toString('utf8');
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {}
+  }
 }
 
 // Cap superior del título que se inyecta en los cuerpos de notificación,
@@ -134,7 +200,7 @@ function checkMainAgentIdle(sessionDir) {
   if (!existsSync(mainWire)) return { settled: true, pendingToolCalls: 0, lastFinishReason: null };
 
   try {
-    const content = readFileSync(mainWire, 'utf-8');
+    const content = readTail(mainWire, 16384); // ~enough for many recent events
     const lines = content.trim().split('\n').filter(Boolean);
     if (lines.length === 0) return { settled: true, pendingToolCalls: 0, lastFinishReason: null };
 
@@ -165,15 +231,11 @@ function checkMainAgentIdle(sessionDir) {
   }
 }
 
-async function verifySettledStop(sessionId, config) {
+export async function verifySettledStop(sessionDir, config) {
   // En ambiente de tests o si no es un sessionId con formato real, no retrasar
-  if (process.env.NODE_ENV === 'test' || !sessionId || !sessionId.startsWith('session_')) {
+  if (process.env.NODE_ENV === 'test' || !sessionDir) {
     return { settled: true, pendingToolCalls: 0, lastFinishReason: null, attempts: 0 };
   }
-
-  const sessionDir = findSessionDir(sessionId);
-  if (!sessionDir)
-    return { settled: true, pendingToolCalls: 0, lastFinishReason: null, attempts: 0 };
 
   // Verificación 1: ¿main está ocupado ahora mismo con herramientas o subagentes?
   const idle = checkMainAgentIdle(sessionDir);
@@ -218,6 +280,13 @@ async function readConfig() {
     return JSON.parse(raw);
   } catch (err) {
     if (err.code === 'ENOENT') return null;
+    logEvent('error', 'config', {
+      hook_event: 'main',
+      status: 'invalid_parse',
+      error_message: err.message,
+      line: err.line ?? null,
+      column: err.column ?? null,
+    });
     return null;
   }
 }
@@ -235,7 +304,7 @@ function getLastAssistantText(sessionDir) {
   if (!existsSync(mainWire)) return null;
 
   try {
-    const content = readFileSync(mainWire, 'utf-8');
+    const content = readTail(mainWire, 32768); // assistant text can be longer
     const lines = content.trim().split('\n').filter(Boolean);
     if (lines.length === 0) return null;
 
@@ -256,18 +325,13 @@ function getLastAssistantText(sessionDir) {
 
     const fullText = textParts.join('').trim();
     if (!fullText) return null;
-
-    // Truncate to a safe size for ntfy (~3000 chars)
-    if (fullText.length > 3000) {
-      return `${fullText.slice(0, 3000)}...\n\n*(Truncated)*`;
-    }
-    return fullText;
+    return truncateForNtfy(fullText);
   } catch {
     return null;
   }
 }
 
-function buildNotification(event, payload, config) {
+function buildNotification(event, payload, config, sessionDir) {
   const lang = SUPPORTED_LANGS.includes(cfgField(config, 'language', 'en'))
     ? config.language
     : 'en';
@@ -279,11 +343,7 @@ function buildNotification(event, payload, config) {
   const sessionTitle = truncateTitle(rawTitle);
   const agentName = payload.agent_name || 'sub-agent';
   const resumeCmd = `kimi --session ${sessionId}`;
-  const topic = cfgField(config, 'topic', '');
-  const server = normalizeServer(cfgField(config, 'server', DEFAULT_SERVER));
-  const topicUrl = `${server}/${encodeURIComponent(topic)}`;
 
-  const sessionDir = findSessionDir(sessionId);
   const assistantText = getLastAssistantText(sessionDir);
   const copyLabel = s.copyCommand || 'Copy command';
   const actions =
@@ -348,7 +408,7 @@ function buildNotification(event, payload, config) {
           agentName,
           sessionTitle,
           resumeCmd,
-          subagentResponse,
+          truncateForNtfy(subagentResponse),
         ),
         tags: s.tags.subagentStop,
         priority: s.priority.subagentStop,
@@ -499,4 +559,149 @@ async function main() {
 // the hook handler.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   main();
+
+  async function main() {
+    let payload = {};
+    try {
+      const raw = await readStdin();
+      if (raw.trim()) payload = JSON.parse(raw);
+    } catch (err) {
+      const lang = 'en';
+      process.stderr.write(`${t(lang).badStdin(err.message)}\n`);
+      logEvent('info', 'exit', { code: 0, path: 'bad_stdin', error_message: err.message });
+      process.exit(0);
+    }
+
+    const event = payload.hook_event_name;
+    // Cache the session directory once per invocation. verifySettledStop and
+    // buildNotification both consult it; findSessionDir does a readdirSync
+    // + an existsSync per entry, so doing it twice is wasted I/O.
+    const sessionDir = payload.session_id?.startsWith('session_')
+      ? findSessionDir(payload.session_id)
+      : null;
+
+    logEvent('info', 'invoke', {
+      hook_event: event,
+      sid: payload.session_id ?? null,
+      agent: payload.agent_name ?? null,
+      cwd: payload.cwd ?? null,
+    });
+
+    const config = await readConfig();
+    const candidateLang = config?.language;
+    const lang = SUPPORTED_LANGS.includes(candidateLang) ? candidateLang : 'en';
+    const s = t(lang);
+
+    if (!config || !config.topic) {
+      logEvent('info', 'config', { status: !config ? 'missing' : 'no_topic' });
+      logEvent('info', 'exit', { code: 0, path: 'no_config' });
+      process.stderr.write(`${s.noConfigStderr}\n`);
+      process.exit(0);
+    }
+
+    logEvent('info', 'config', { status: 'loaded', topic: config.topic });
+
+    // Toggle de fin de turno: si está apagado y el evento es Stop, salir silencioso.
+    if (event === 'Stop' && !cfgField(config, 'notifyTurnEnd', true)) {
+      logEvent('info', 'filter', { reason: 'notifyTurnEnd', hook_event: event });
+      logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
+      process.exit(0);
+    }
+
+    // Toggle de sub-agentes: si está apagado y el evento es SubagentStop, salir silencioso.
+    if (event === 'SubagentStop' && !cfgField(config, 'notifySubagent', false)) {
+      logEvent('info', 'filter', { reason: 'notifySubagent', hook_event: event });
+      logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
+      process.exit(0);
+    }
+
+    // Si un subagente emite un Stop interno y notifySubagent está desactivado, silenciarlo.
+    if (
+      event === 'Stop' &&
+      payload.agent_name &&
+      payload.agent_name !== 'main' &&
+      !cfgField(config, 'notifySubagent', false)
+    ) {
+      logEvent('info', 'filter', {
+        reason: 'notifySubagent',
+        hook_event: event,
+        agent: payload.agent_name,
+      });
+      logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
+      process.exit(0);
+    }
+
+    // Toggle de fin de sesión: si está apagado y el evento es SessionEnd, salir silencioso.
+    if (event === 'SessionEnd' && !cfgField(config, 'notifySessionEnd', true)) {
+      logEvent('info', 'filter', { reason: 'notifySessionEnd', hook_event: event });
+      logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
+      process.exit(0);
+    }
+
+    // Toggle de aprobación/permiso: si está apagado y el evento es PermissionRequest, salir silencioso.
+    if (event === 'PermissionRequest' && !cfgField(config, 'notifyApproval', true)) {
+      logEvent('info', 'filter', { reason: 'notifyApproval', hook_event: event });
+      logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
+      process.exit(0);
+    }
+
+    // Para eventos Stop: verificar que el agente principal no tenga herramientas activas y esté asentado
+    if (event === 'Stop') {
+      const verdict = await verifySettledStop(sessionDir, config);
+      logEvent('info', 'settle', {
+        sid: payload.session_id ?? null,
+        result: verdict.settled,
+        pending_tool_calls: verdict.pendingToolCalls,
+        last_finish_reason: verdict.lastFinishReason,
+        attempts: verdict.attempts,
+      });
+      if (!verdict.settled) {
+        logEvent('info', 'exit', { code: 0, path: 'settle_silenced' });
+        process.exit(0);
+      }
+    }
+
+    const note = buildNotification(event, payload, config, sessionDir);
+    if (!note) {
+      logEvent('info', 'exit', { code: 0, path: 'unknown_event', hook_event: event });
+      process.exit(0);
+    }
+
+    // A user-set priority overrides the per-event default. Invalid strings in
+    // the config are silently ignored so a typo never breaks the handler.
+    const overridePriority = resolvePriority(config.priority);
+    if (overridePriority !== null) {
+      note.priority = overridePriority;
+    }
+
+    const server = normalizeServer(config.server || DEFAULT_SERVER);
+    const url = `${server}/${encodeURIComponent(config.topic)}`;
+    const headers = {
+      Title: note.title,
+      Priority: String(note.priority),
+      Tags: note.tags.join(','),
+      Markdown: 'yes',
+    };
+    if (note.actions) {
+      headers.Actions = note.actions;
+    }
+    if (config.token) {
+      headers.Authorization = `Bearer ${config.token}`;
+    }
+
+    try {
+      const res = await fetch(url, { method: 'POST', headers, body: note.message });
+      if (res.ok) {
+        logEvent('info', 'notify', { hook_event: event, status: res.status });
+      } else {
+        logEvent('error', 'notify', { hook_event: event, status: res.status });
+        process.stderr.write(`${s.ntfyError(res.status)}\n`);
+      }
+    } catch (err) {
+      logEvent('error', 'notify', { hook_event: event, error_message: err.message });
+      process.stderr.write(`${s.fetchError(err.message)}\n`);
+    }
+    logEvent('info', 'exit', { code: 0, path: 'ok' });
+    process.exit(0);
+  }
 }
