@@ -51,6 +51,7 @@ ${s.helpUsage || 'Usage:'}
   kimi-ntfy-cli session <on|off>
   kimi-ntfy-cli approval <on|off>
   kimi-ntfy-cli turnend <on|off>
+  kimi-ntfy-cli question <on|off>
   kimi-ntfy-cli priority <min|low|default|high|urgent|reset>
   kimi-ntfy-cli test [message]
   kimi-ntfy-cli status
@@ -97,6 +98,7 @@ async function cmdSetup([topic, server, token]) {
     notifySessionEnd: cfg.notifySessionEnd ?? true,
     notifyApproval: cfg.notifyApproval ?? true,
     notifyTurnEnd: cfg.notifyTurnEnd ?? true,
+    notifyQuestion: cfg.notifyQuestion ?? true,
   };
   if (token !== undefined) next.token = token;
   await saveConfig(next);
@@ -186,6 +188,20 @@ async function cmdTurnEnd([onoff]) {
   const lang = await currentLang();
   const s = t(lang);
   console.log(cfg.notifyTurnEnd ? s.turnEndOn : s.turnEndOff);
+  console.log(JSON.stringify({ ...cfg }, null, 2));
+}
+
+async function cmdQuestion([onoff]) {
+  if (!['on', 'off'].includes(onoff)) {
+    console.error('Error: use "on" or "off"');
+    process.exit(2);
+  }
+  const cfg = await loadConfig();
+  cfg.notifyQuestion = onoff === 'on';
+  await saveConfig(cfg);
+  const lang = await currentLang();
+  const s = t(lang);
+  console.log(cfg.notifyQuestion ? s.questionOn : s.questionOff);
   console.log(JSON.stringify({ ...cfg }, null, 2));
 }
 
@@ -284,6 +300,10 @@ const handlers = {
   turnend: cmdTurnEnd,
   'turn-end': cmdTurnEnd,
   turns: cmdTurnEnd,
+  question: cmdQuestion,
+  questions: cmdQuestion,
+  asks: cmdQuestion,
+  ask: cmdQuestion,
   priority: cmdPriority,
   test: cmdTest,
   status: cmdStatus,

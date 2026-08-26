@@ -14,6 +14,7 @@ const ALLOWED_EVENTS = new Set([
   'SessionEnd',
   'SubagentStop',
   'PermissionRequest',
+  'TaskStarted',
 ]);
 
 async function fileExists(path) {
@@ -81,7 +82,7 @@ async function main() {
           } else {
             if (!ALLOWED_EVENTS.has(hook.event)) {
               errors.push(
-                `hooks[${i}].event "${hook.event}" not in [Stop, StopFailure, SessionEnd, SubagentStop]`,
+                `hooks[${i}].event "${hook.event}" not in [Stop, StopFailure, SessionEnd, SubagentStop, PermissionRequest, TaskStarted]`,
               );
             }
             if (typeof hook.command !== 'string' || hook.command.length === 0) {

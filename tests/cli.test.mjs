@@ -271,6 +271,43 @@ test('cli turnend aliases (turn-end, turns) map to the same handler', async () =
   }
 });
 
+test('cli question on|off toggles notifyQuestion flag and prints proper feedback', async () => {
+  const home = await tmpHome('question');
+  try {
+    await seed(home, { topic: 't' });
+    const off = await runCli(home, 'question', 'off');
+    assert.equal(off.status, 0, `unexpected exit, stderr=${off.stderr}`);
+    assert.equal((await readConfig(home)).notifyQuestion, false);
+    assert.match(off.stdout, /disabled/);
+    const on = await runCli(home, 'question', 'on');
+    assert.equal(on.status, 0, `unexpected exit, stderr=${on.stderr}`);
+    assert.equal((await readConfig(home)).notifyQuestion, true);
+    assert.match(on.stdout, /enabled/);
+    const bad = await runCli(home, 'question', 'maybe');
+    assert.equal(bad.status, 2);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('cli question aliases (questions, asks, ask) map to the same handler', async () => {
+  const home = await tmpHome('question-alias');
+  try {
+    await seed(home, { topic: 't' });
+    const a = await runCli(home, 'questions', 'off');
+    assert.equal(a.status, 0, `stderr=${a.stderr}`);
+    assert.equal((await readConfig(home)).notifyQuestion, false);
+    const b = await runCli(home, 'asks', 'on');
+    assert.equal(b.status, 0, `stderr=${b.stderr}`);
+    assert.equal((await readConfig(home)).notifyQuestion, true);
+    const c = await runCli(home, 'ask', 'off');
+    assert.equal(c.status, 0, `stderr=${c.stderr}`);
+    assert.equal((await readConfig(home)).notifyQuestion, false);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('cli priority accepts the five ntfy names and aliases; rejects others', async () => {
   const home = await tmpHome('pri');
   try {

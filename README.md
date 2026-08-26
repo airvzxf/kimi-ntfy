@@ -1,7 +1,7 @@
 # kimi-ntfy
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![Version: 0.7.0](https://img.shields.io/badge/version-0.7.0-blue.svg)](kimi.plugin.json)
+[![Version: 0.8.0](https://img.shields.io/badge/version-0.8.0-blue.svg)](kimi.plugin.json)
 [![CI](https://github.com/airvzxf/kimi-ntfy/actions/workflows/validate.yml/badge.svg)](https://github.com/airvzxf/kimi-ntfy/actions/workflows/validate.yml)
 
 Kimi Code plugin that pushes a notification to [ntfy.sh](https://ntfy.sh) when the
@@ -24,7 +24,7 @@ Spanish optional.
 ## Install
 
 ```
-/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.7.0
+/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.8.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
@@ -47,6 +47,7 @@ the ntfy rules: letters, digits, `-` and `_`, max 64 characters.
 | `/kimi-ntfy:session <on\|off>` | Toggle `SessionEnd` notifications (default on). |
 | `/kimi-ntfy:approval <on\|off>` | Toggle `PermissionRequest` notifications (default on). |
 | `/kimi-ntfy:turnend <on\|off>` | Toggle end-of-turn (`Stop`) notifications (default on). Set to `off` in long sub-agent chains so you don't get a push every time a sub-agent (or the main agent) closes a turn — keep `notifySessionEnd` on for the actual end-of-session ping. |
+| `/kimi-ntfy:question <on\|off>` | Toggle notifications when the agent asks you a question via `AskUserQuestion` (`[question]`, default on). |
 | `/kimi-ntfy:priority <level>` | Override the ntfy priority for every event (see [Priority levels](#priority-levels)). |
 
 ## Configuration
@@ -62,6 +63,7 @@ The plugin reads and writes `~/.kimi-code/kimi-ntfy-config.json` (mode `0600`):
   "notifySubagent": false,
   "notifySessionEnd": true,
   "notifyApproval": true,
+  "notifyQuestion": true,
   "priority": "default"
 }
 ```
@@ -76,6 +78,7 @@ The plugin reads and writes `~/.kimi-code/kimi-ntfy-config.json` (mode `0600`):
 | `notifySessionEnd` | `true` | If `false`, silences notifications on `SessionEnd` (`[closed]`). |
 | `notifyApproval` | `true` | If `true`, fires on `PermissionRequest` (`[approval]`). |
 | `notifyTurnEnd` | `true` | If `false`, silences every `Stop` push (eliminates the duplicate notification Kimi Code fires when a sub-agent finishes its turn — the `Stop` arrives with the main session's metadata and no `agent_name`, so the previous `notifySubagent`-only filter cannot catch it). Set this to `false` when you run long sub-agent chains. |
+| `notifyQuestion` | `true` | If `false`, silences notifications on `TaskStarted` with `kind=question` (`[question]`), which fires when the agent uses `AskUserQuestion` and pauses the turn to wait for input. |
 | `priority` | (unset) | Optional ntfy priority override that wins over every per-event default. See [Priority levels](#priority-levels). |
 
 ## Priority levels
@@ -90,6 +93,7 @@ being noisy:
 | `PermissionRequest` | `urgent` (5) | Long burst + pop-over — Kimi needs approval/input. |
 | `SessionEnd` | `low` (2) | Silent — confirmed the session closed. |
 | `SubagentStop` | `min` (1) | Silent — only meaningful when `notifySubagent` is on. |
+| `TaskStarted` (kind=`question`) | `urgent` (5) | Long burst + pop-over — Kimi paused the turn to ask you something. |
 
 Use `/kimi-ntfy:priority <level>` to override every event with one of the
 five ntfy levels (aliases in parentheses):
@@ -151,6 +155,7 @@ and POSTs to the configured topic.
 | `SessionEnd` | `<project> - session closed` | `wave, robot` | 2 (low) | on (toggle `notifySessionEnd`) |
 | `SubagentStop` | `<project> - sub-agent <name> done` | `link, robot` | 1 (min) | off (toggle `notifySubagent`) |
 | `PermissionRequest` | `<project> - approval` | `hand, warning` | 5 (urgent) | on (toggle `notifyApproval`) |
+| `TaskStarted` (kind=`question`) | `<project> - question` | `question, bell` | 5 (urgent) | on (toggle `notifyQuestion`) |
 
 Every notification includes:
 
@@ -301,7 +306,7 @@ por defecto, español opcional.
 ### Instalación
 
 ```
-/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.7.0
+/plugins install git@github.com:airvzxf/kimi-ntfy.git@v0.8.0
 /reload
 /kimi-ntfy:setup mi-topic-aleatorio-7q2x
 /kimi-ntfy:test
@@ -324,6 +329,7 @@ las reglas de ntfy: letras, números, `-` y `_`, máximo 64 caracteres.
 | `/kimi-ntfy:session <on\|off>` | Activa o desactiva las notificaciones de fin de sesión (`[cerrada]`, default on). |
 | `/kimi-ntfy:approval <on\|off>` | Activa o desactiva las notificaciones cuando Kimi requiere aprobación (`[aprobación]`, default on). |
 | `/kimi-ntfy:turnend <on\|off>` | Activa o desactiva las notificaciones de fin de turno (`Stop`, default on). Ponlo en `off` cuando uses cadenas largas de sub-agentes para no recibir push cada vez que un sub-agente (o el main) cierre un turno — deja `notifySessionEnd` en `on` para el push real de fin de sesión. |
+| `/kimi-ntfy:question <on\|off>` | Activa o desactiva las notificaciones cuando el agente hace una pregunta con `AskUserQuestion` (`[pregunta]`, default on). |
 | `/kimi-ntfy:priority <nivel>` | Sobrescribe la prioridad de ntfy para todos los eventos (`min`, `low`, `default`, `high`, `urgent`, o `reset`). |
 
 ### Configuración
@@ -339,7 +345,8 @@ El plugin lee y escribe `~/.kimi-code/kimi-ntfy-config.json` (permisos `0600`):
   "notifySubagent": false,
   "notifySessionEnd": true,
   "notifyApproval": true,
-  "notifyTurnEnd": true
+  "notifyTurnEnd": true,
+  "notifyQuestion": true
 }
 ```
 
@@ -353,6 +360,7 @@ El plugin lee y escribe `~/.kimi-code/kimi-ntfy-config.json` (permisos `0600`):
 | `notifySessionEnd` | `true` | Si es `false`, silencia notificaciones en `SessionEnd` (`[cerrada]`). |
 | `notifyApproval` | `true` | Si es `true`, dispara en `PermissionRequest` (`[aprobación]`). |
 | `notifyTurnEnd` | `true` | Si es `false`, silencia todos los `Stop` (útil en cadenas largas de sub-agentes). |
+| `notifyQuestion` | `true` | Si es `false`, silencia notificaciones en `TaskStarted` con `kind=question` (`[pregunta]`, disparado cuando el agente usa `AskUserQuestion`). |
 | `priority` | (sin definir) | Sobrescritura opcional de prioridad que prevalece sobre los valores por evento. |
 
 Para cambiar el idioma después de la instalación:
