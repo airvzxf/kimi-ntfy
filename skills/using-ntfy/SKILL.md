@@ -87,3 +87,19 @@ https://ntfy.sh/airvzxf-kimiCode
 ```
 
 Subscribe to it from your phone to watch pushes land during testing.
+
+## Troubleshooting
+
+If a notification you expected never arrived, the handler leaves a JSONL
+trail at `~/.kimi-code/logs/kimi-ntfy.jsonl`:
+
+```bash
+jq -c 'select(.event=="exit")' ~/.kimi-code/logs/kimi-ntfy.jsonl | tail
+```
+
+The `path` field on each `exit` event tells you what silenced the
+notification: `settle_silenced` (main agent still busy), `filter_silenced`
+(a toggle was off), `no_config`, `bad_stdin`, `notify_error`. INFO
+events go to `stdout`; ERROR/FATAL go to `stderr`. Override the file
+with `KIMI_NTFY_LOG=<path>`, disable it with `=disable`, or silence
+everything (including stdout/stderr) with `=silent`.

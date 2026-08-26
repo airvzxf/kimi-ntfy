@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // bin/kimi-ntfy-cli.mjs
-// Sub-comandos: setup, lang, server, subagents, session, approval, turnend, priority, test, status, path.
+// Sub-comandos: setup, lang, server, subagents, session, approval, turnend, priority, test, status, path, version, -v, --version.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PRIORITY_LEVELS, SUPPORTED_LANGS, resolvePriority, t } from './i18n.mjs';
 
 const HOME = process.env.KIMI_CODE_HOME || join(homedir(), '.kimi-code');
 const CONFIG_PATH = join(HOME, 'kimi-ntfy-config.json');
 const DEFAULT_SERVER = 'https://ntfy.sh';
+// Read version from the plugin's package.json next to this script.
+const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_VERSION = await readFile(join(PLUGIN_DIR, '..', 'package.json'), 'utf8')
+  .then((s) => JSON.parse(s).version)
+  .catch(() => 'unknown');
 
 // Devuelve los strings del idioma guardado en el config, o 'en' si no hay config.
 async function currentLang() {
@@ -49,6 +55,7 @@ ${s.helpUsage || 'Usage:'}
   kimi-ntfy-cli test [message]
   kimi-ntfy-cli status
   kimi-ntfy-cli path
+  kimi-ntfy-cli version
 `);
 }
 
@@ -257,6 +264,10 @@ function cmdPath() {
   console.log(CONFIG_PATH);
 }
 
+function cmdVersion() {
+  console.log(`kimi-ntfy ${PLUGIN_VERSION}`);
+}
+
 const subcommand = process.argv[2];
 const args = process.argv.slice(3);
 
@@ -277,6 +288,9 @@ const handlers = {
   test: cmdTest,
   status: cmdStatus,
   path: cmdPath,
+  version: cmdVersion,
+  '-v': cmdVersion,
+  '--version': cmdVersion,
 };
 
 if (!subcommand || subcommand === '--help' || subcommand === '-h' || subcommand === 'help') {

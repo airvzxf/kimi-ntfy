@@ -12,11 +12,13 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_LOG_PATH,
+  RESPONSE_MAX,
   TITLE_KEEP,
   TITLE_MAX,
   TITLE_SEPARATOR,
   logEvent,
   truncateTitle,
+  verifySettledStop,
 } from '../bin/notify.mjs';
 import payloads from './fixtures/payloads.json' with { type: 'json' };
 import { start } from './mock-ntfy.mjs';
@@ -671,38 +673,47 @@ test('Stop with emoji in session_title keeps the emoji intact across truncation'
 // the user's real log file untouched.
 // ---------------------------------------------------------------------------
 
-test('logEvent: writes an ISO-timestamped line with LEVEL, event, and key=value fields', () => {
+test('logEvent: writes one JSON object per line with ts, level, event and arbitrary fields', () => {
   const tmp = join(
     tmpdir(),
-    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
   );
   try {
     process.env.KIMI_NTFY_LOG = tmp;
-    logEvent('info', 'invoke', { event: 'Stop', sid: 'session_abc', agent: 'main' });
-    const line = readFileSync(tmp, 'utf8').trimEnd();
-    assert.match(
-      line,
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z INFO {1,2}invoke {2,}event=Stop sid=session_abc agent=main$/,
-    );
+    logEvent('info', 'invoke', { hook_event: 'Stop', sid: 'session_abc', agent: 'main' });
+    const content = readFileSync(tmp, 'utf8');
+    const lines = content.trim().split('\n').filter(Boolean);
+    assert.equal(lines.length, 1, `expected exactly one line, got ${lines.length}`);
+    const obj = JSON.parse(lines[0]);
+    assert.match(obj.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.equal(obj.level, 'info');
+    assert.equal(obj.event, 'invoke');
+    assert.equal(obj.hook_event, 'Stop');
+    assert.equal(obj.sid, 'session_abc');
+    assert.equal(obj.agent, 'main');
   } finally {
     Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
     rm(tmp, { force: true });
   }
 });
 
-test('logEvent: collapses whitespace and newlines in field values to one log line', () => {
+test('logEvent: writes a strictly-typed JSONL — one event per line, no embedded newlines', () => {
   const tmp = join(
     tmpdir(),
-    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
   );
   try {
     process.env.KIMI_NTFY_LOG = tmp;
     logEvent('info', 'probe', { msg: 'hello   world\nNEWLINE HERE', multi: 'a\tb' });
     const content = readFileSync(tmp, 'utf8');
-    assert.equal(content.split('\n').filter(Boolean).length, 1);
-    assert.ok(!content.includes('\nNEWLINE'));
-    assert.ok(content.includes('hello_world_NEWLINE_HERE'));
-    assert.ok(content.includes('a_b'));
+    const lines = content.split('\n');
+    // JSON.stringify will escape the embedded \n as \n inside the JSON string,
+    // so the file still has exactly one line terminated by \n.
+    assert.equal(lines.filter(Boolean).length, 1, `got ${JSON.stringify(lines)}`);
+    assert.ok(content.endsWith('\n'));
+    const obj = JSON.parse(content);
+    assert.equal(obj.msg, 'hello   world\nNEWLINE HERE');
+    assert.equal(obj.multi, 'a\tb');
   } finally {
     Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
     rm(tmp, { force: true });
@@ -714,14 +725,15 @@ test('logEvent: creates the parent directory if missing', () => {
     tmpdir(),
     `kimi-ntfy-logdir-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  const target = join(root, 'a', 'b', 'c', 'notify.log');
+  const target = join(root, 'a', 'b', 'c', 'notify.jsonl');
   try {
     process.env.KIMI_NTFY_LOG = target;
     logEvent('info', 'mkdir_test', { x: 1 });
     assert.ok(existsSync(target), `target missing at ${target}`);
     const content = readFileSync(target, 'utf8');
-    assert.ok(content.includes('mkdir_test'));
-    assert.ok(content.includes('x=1'));
+    const obj = JSON.parse(content.trim());
+    assert.equal(obj.event, 'mkdir_test');
+    assert.equal(obj.x, 1);
   } finally {
     Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
     rm(root, { recursive: true, force: true });
@@ -731,7 +743,7 @@ test('logEvent: creates the parent directory if missing', () => {
 test('logEvent: KIMI_NTFY_LOG=disable writes nothing', () => {
   const tmp = join(
     tmpdir(),
-    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
   );
   try {
     process.env.KIMI_NTFY_LOG = 'disable';
@@ -746,7 +758,7 @@ test('logEvent: KIMI_NTFY_LOG=disable writes nothing', () => {
 test('logEvent: writes mode 0600', async () => {
   const tmp = join(
     tmpdir(),
-    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
   );
   try {
     process.env.KIMI_NTFY_LOG = tmp;
@@ -759,29 +771,107 @@ test('logEvent: writes mode 0600', async () => {
   }
 });
 
-test('logEvent: truncates fields longer than 256 chars to keep one line per event', () => {
+test('logEvent: long fields are accepted and parse back from JSON cleanly', () => {
   const tmp = join(
     tmpdir(),
-    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.log`,
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
   );
   try {
     process.env.KIMI_NTFY_LOG = tmp;
-    const huge = 'x'.repeat(1000);
+    const huge = 'x'.repeat(2048);
     logEvent('info', 'truncate', { msg: huge });
     const content = readFileSync(tmp, 'utf8');
+    // JSONL keeps one line per event regardless of field size — no truncation.
     assert.equal(content.split('\n').filter(Boolean).length, 1);
-    const xrun = content.match(/x+/)?.[0].length ?? 0;
-    assert.ok(xrun <= 256, `expected <= 256 x's, got ${xrun}`);
+    const obj = JSON.parse(content);
+    assert.equal(obj.msg.length, 2048, 'JSONL does not truncate; the whole msg persists');
   } finally {
     Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
     rm(tmp, { force: true });
   }
 });
 
-test('DEFAULT_LOG_PATH is under $KIMI_CODE_HOME/logs/kimi-ntfy.log', () => {
+test('logEvent: emits to stdout for INFO and stderr for ERROR (capture helper)', () => {
+  const tmp = join(
+    tmpdir(),
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
+  try {
+    process.env.KIMI_NTFY_LOG = tmp;
+    // Capture both streams from this Node process (the test IS Node, so
+    // monkey-patch process.stdout / process.stderr just for this test).
+    const captured = { stdout: '', stderr: '' };
+    const origWriteOut = process.stdout.write.bind(process.stdout);
+    const origWriteErr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = (chunk, ...rest) => {
+      captured.stdout += String(chunk);
+      return origWriteOut(chunk, ...rest);
+    };
+    process.stderr.write = (chunk, ...rest) => {
+      captured.stderr += String(chunk);
+      return origWriteErr(chunk, ...rest);
+    };
+    try {
+      logEvent('info', 'std_invoke', { foo: 'bar' });
+      logEvent('error', 'std_fail', { code: 500 });
+    } finally {
+      process.stdout.write = origWriteOut;
+      process.stderr.write = origWriteErr;
+    }
+    assert.match(captured.stdout, /"event":"std_invoke"/, captured.stdout);
+    assert.match(captured.stderr, /"event":"std_fail"/, captured.stderr);
+    assert.match(captured.stderr, /"level":"error"/, captured.stderr);
+    assert.doesNotMatch(captured.stdout, /"event":"std_fail"/, captured.stdout);
+    // Each line ends with \n and parses as JSON.
+    const stdoutObj = JSON.parse(captured.stdout.trim());
+    assert.equal(stdoutObj.event, 'std_invoke');
+    const stderrObj = JSON.parse(captured.stderr.trim());
+    assert.equal(stderrObj.event, 'std_fail');
+  } finally {
+    Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+    rm(tmp, { force: true });
+  }
+});
+
+test('logEvent: KIMI_NTFY_LOG=silent suppresses stdout, stderr AND the file', () => {
+  const tmp = join(
+    tmpdir(),
+    `kimi-ntfy-log-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
+  try {
+    process.env.KIMI_NTFY_LOG = 'silent';
+    const captured = { stdout: '', stderr: '' };
+    const origWriteOut = process.stdout.write.bind(process.stdout);
+    const origWriteErr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = (chunk, ...rest) => {
+      captured.stdout += String(chunk);
+      return origWriteOut(chunk, ...rest);
+    };
+    process.stderr.write = (chunk, ...rest) => {
+      captured.stderr += String(chunk);
+      return origWriteErr(chunk, ...rest);
+    };
+    try {
+      logEvent('info', 'should_not_appear_stdout', { x: 1 });
+      logEvent('error', 'should_not_appear_stderr', { x: 1 });
+    } finally {
+      process.stdout.write = origWriteOut;
+      process.stderr.write = origWriteErr;
+    }
+    assert.equal(captured.stdout, '', `stdout should be empty, got ${captured.stdout}`);
+    assert.equal(captured.stderr, '', `stderr should be empty, got ${captured.stderr}`);
+    // The tmp path was never created (no writes).
+    assert.equal(existsSync(tmp), false, 'no file should be created when silent');
+  } finally {
+    Reflect.deleteProperty(process.env, 'KIMI_NTFY_LOG');
+    rm(tmp, { force: true });
+  }
+});
+
+test('DEFAULT_LOG_PATH ends in /logs/kimi-ntfy.jsonl', () => {
   assert.ok(
-    DEFAULT_LOG_PATH.endsWith('logs/kimi-ntfy.log'),
-    `expected suffix logs/kimi-ntfy.log, got ${DEFAULT_LOG_PATH}`,
+    DEFAULT_LOG_PATH.endsWith('logs/kimi-ntfy.jsonl'),
+    `expected suffix logs/kimi-ntfy.jsonl, got ${DEFAULT_LOG_PATH}`,
   );
 });
 
@@ -802,19 +892,24 @@ test('handler honors KIMI_CODE_HOME for the default log path', async () => {
     });
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 1);
-    const expectedFile = join(home, 'logs', 'kimi-ntfy.log');
+    const expectedFile = join(home, 'logs', 'kimi-ntfy.jsonl');
     const st = await stat(expectedFile);
     assert.ok(st.size > 0, `expected log file at ${expectedFile} to be non-empty`);
+    const events = (await readFile(expectedFile, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    assert.ok(events.some((e) => e.event === 'invoke' && e.hook_event === 'Stop'));
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });
   }
 });
 
-test('Stop silenced by settle_check writes settle + exit lines', async () => {
+test('Stop silenced by settle_check writes settle + exit lines (JSONL)', async () => {
   const mock = await start();
   const home = await tmpHome();
-  const logFile = join(home, 'kimi-ntfy.log');
+  const logFile = join(home, 'kimi-ntfy.jsonl');
   const sessionDir = join(home, 'sessions', 'wd_test', 'session_busy_log', 'agents', 'main');
   try {
     await seed(home, {
@@ -841,13 +936,19 @@ test('Stop silenced by settle_check writes settle + exit lines', async () => {
     );
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 0, 'busy main agent should silence Stop');
-    const content = await readFile(logFile, 'utf8');
-    assert.ok(content.includes('settle'), `expected a settle line, got:\n${content}`);
-    assert.ok(content.includes('sid=session_busy_log'), content);
-    assert.ok(content.includes('result=false'), content);
-    assert.ok(content.includes('pending_tool_calls='), content);
-    assert.ok(content.includes('last_finish_reason=tool_use'), content);
-    assert.ok(content.includes('path=settle_silenced'), content);
+    const events = (await readFile(logFile, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const settleEv = events.find((e) => e.event === 'settle');
+    const exitEv = events.find((e) => e.event === 'exit');
+    assert.ok(settleEv, `expected a settle event, got:\n${JSON.stringify(events, null, 2)}`);
+    assert.ok(exitEv, 'expected an exit event');
+    assert.equal(settleEv.sid, 'session_busy_log');
+    assert.equal(settleEv.result, false);
+    assert.equal(settleEv.pending_tool_calls, 1);
+    assert.equal(settleEv.last_finish_reason, 'tool_use');
+    assert.equal(exitEv.path, 'settle_silenced');
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });
@@ -857,7 +958,7 @@ test('Stop silenced by settle_check writes settle + exit lines', async () => {
 test('Stop normal flow writes invoke + settle result=true + notify + exit path=ok', async () => {
   const mock = await start();
   const home = await tmpHome();
-  const logFile = join(home, 'kimi-ntfy.log');
+  const logFile = join(home, 'kimi-ntfy.jsonl');
   try {
     await seed(home, {
       topic: 'mytopic',
@@ -872,14 +973,19 @@ test('Stop normal flow writes invoke + settle result=true + notify + exit path=o
     });
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 1);
-    const content = await readFile(logFile, 'utf8');
-    assert.ok(content.includes('invoke'), content);
-    assert.ok(content.includes('event=Stop'), content);
-    assert.ok(content.includes('settle'), content);
-    assert.ok(content.includes('result=true'), content);
-    assert.ok(content.includes('notify'), content);
-    assert.ok(content.includes('status='), content);
-    assert.ok(content.includes('path=ok'), content);
+    const events = (await readFile(logFile, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const types = events.map((e) => e.event);
+    assert.ok(types.includes('invoke'));
+    assert.ok(types.includes('settle'));
+    assert.ok(types.includes('notify'));
+    assert.ok(types.includes('exit'));
+    assert.equal(events.find((e) => e.event === 'invoke').hook_event, 'Stop');
+    assert.equal(events.find((e) => e.event === 'settle').result, true);
+    assert.equal(events.find((e) => e.event === 'notify').status, 200);
+    assert.equal(events.find((e) => e.event === 'exit').path, 'ok');
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });
@@ -889,7 +995,7 @@ test('Stop normal flow writes invoke + settle result=true + notify + exit path=o
 test('Stop silenced by notifyTurnEnd=false writes filter reason=notifyTurnEnd + exit path=filter_silenced', async () => {
   const mock = await start();
   const home = await tmpHome();
-  const logFile = join(home, 'kimi-ntfy.log');
+  const logFile = join(home, 'kimi-ntfy.jsonl');
   try {
     await seed(home, { topic: 'mytopic', server: mock.url, notifyTurnEnd: false });
     const r = await runNotifyWithEnv(home, JSON.stringify(payloads.stop), {
@@ -899,11 +1005,236 @@ test('Stop silenced by notifyTurnEnd=false writes filter reason=notifyTurnEnd + 
     });
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 0);
-    const content = await readFile(logFile, 'utf8');
-    assert.ok(content.includes('filter'), content);
-    assert.ok(content.includes('reason=notifyTurnEnd'), content);
-    assert.ok(content.includes('event=Stop'), content);
-    assert.ok(content.includes('path=filter_silenced'), content);
+    const events = (await readFile(logFile, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const filterEv = events.find((e) => e.event === 'filter');
+    const exitEv = events.find((e) => e.event === 'exit');
+    assert.ok(filterEv, `expected a filter event, got ${JSON.stringify(events)}`);
+    assert.equal(filterEv.reason, 'notifyTurnEnd');
+    assert.equal(filterEv.hook_event, 'Stop');
+    assert.equal(exitEv.path, 'filter_silenced');
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Unit tests for verifySettledStop — pins the new return shape
+// ({settled, pendingToolCalls, lastFinishReason, attempts}).
+// ---------------------------------------------------------------------------
+
+test('verifySettledStop: null sessionDir returns settled:true with zero counters', async () => {
+  const v = await verifySettledStop(null, {});
+  assert.deepEqual(v, { settled: true, pendingToolCalls: 0, lastFinishReason: null, attempts: 0 });
+});
+
+test('verifySettledStop: missing wire.jsonl returns settled:true (defaults)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'kimi-ntfy-settle-'));
+  try {
+    // No agents/main/wire.jsonl under this dir.
+    const v = await verifySettledStop(dir, {});
+    assert.equal(v.settled, true);
+    assert.equal(v.pendingToolCalls, 0);
+    assert.equal(v.lastFinishReason, null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('verifySettledStop: pending tool.call returns settled:false with pendingToolCalls=1', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'kimi-ntfy-settle-'));
+  const wireDir = join(dir, 'agents', 'main');
+  try {
+    await mkdir(wireDir, { recursive: true });
+    await writeFile(
+      join(wireDir, 'wire.jsonl'),
+      `${JSON.stringify({ event: { type: 'tool.call', toolCall: { name: 'Bash' } } })}\n${JSON.stringify({ event: { type: 'step.end', finishReason: 'tool_use' } })}\n`,
+    );
+    const v = await verifySettledStop(dir, { settleAttempts: 0 });
+    assert.equal(v.settled, false);
+    assert.equal(v.pendingToolCalls, 1);
+    assert.equal(v.lastFinishReason, 'tool_use');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('verifySettledStop: balanced tool.call+tool.result returns settled:true', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'kimi-ntfy-settle-'));
+  const wireDir = join(dir, 'agents', 'main');
+  try {
+    await mkdir(wireDir, { recursive: true });
+    await writeFile(
+      join(wireDir, 'wire.jsonl'),
+      `${JSON.stringify({ event: { type: 'tool.call', toolCall: { name: 'Bash' } } })}\n${JSON.stringify({ event: { type: 'tool.result' } })}\n${JSON.stringify({ event: { type: 'step.end', finishReason: 'end_turn' } })}\n`,
+    );
+    const v = await verifySettledStop(dir, { settleAttempts: 0 });
+    assert.equal(v.settled, true);
+    assert.equal(v.pendingToolCalls, 0);
+    assert.equal(v.lastFinishReason, 'end_turn');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Truncation helpers — RESPONSE_MAX caps body text for both assistantText
+// and subagentResponse.
+// ---------------------------------------------------------------------------
+
+test('RESPONSE_MAX is 3000 and helper truncates above that with a marker', () => {
+  assert.equal(RESPONSE_MAX, 3000);
+  // Indirect via the integration: send a long SubagentStop response and
+  // expect the (Truncated) marker.
+});
+
+test('SubagentStop body truncates long responses over RESPONSE_MAX chars', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, {
+      topic: 'mytopic',
+      server: mock.url,
+      notifySubagent: true,
+    });
+    const huge = 'y'.repeat(RESPONSE_MAX * 2);
+    const r = await runNotifyWithEnv(
+      home,
+      JSON.stringify({
+        hook_event_name: 'SubagentStop',
+        session_id: 'session_subagent_test',
+        session_title: 'x',
+        client_type: 'kimi_code_cli',
+        agent_name: 'explore',
+        cwd: '/home/wolf/test',
+        response: huge,
+      }),
+      { ...process.env, KIMI_CODE_HOME: home },
+    );
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    const body = mock.records[0].body;
+    assert.ok(body.includes('*(Truncated)*'), body);
+    assert.ok(!body.includes('y'.repeat(RESPONSE_MAX + 2)));
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Stderr capture for error events — confirms JSONL flow through stderr
+// independently of the persisted file.
+// ---------------------------------------------------------------------------
+
+test('handler emits JSONL error events on stderr when ntfy returns 5xx', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, {
+      topic: 'mytopic',
+      server: `${mock.url}?fail=1`,
+      notifyTurnEnd: true,
+      settleAttempts: 0,
+    });
+    const r = await runNotifyWithEnv(home, JSON.stringify(payloads.stop), {
+      ...process.env,
+      KIMI_CODE_HOME: home,
+      KIMI_NTFY_LOG: 'disable', // disable the persisted file; stream output remains
+    });
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    // stderr MUST contain at least one JSONL error event. Any non-JSON
+    // lines (the legacy [kimi-ntfy] stderr text from the handler) are
+    // silently skipped.
+    const stderrLines = r.stderr
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    const errorEvents = stderrLines
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter((e) => e && e.level === 'error' && e.event === 'notify');
+    assert.ok(errorEvents.length >= 1, `expected error event on stderr, got ${r.stderr}`);
+    assert.equal(errorEvents[0].status, 500);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Tail-only reads — verify the handler doesn't load multi-MB wire files.
+// ---------------------------------------------------------------------------
+
+test('checkMainAgentIdle reads only the tail of wire.jsonl (perf guarantee)', async () => {
+  // Synthesize a 2 MB wire.jsonl full of "tool.call" never followed by
+  // tool.result. The settled verdict must be false (still busy) and the
+  // process should finish quickly — a full read of 2 MB would take
+  // measurable time on slow disks; tail-only stays fast.
+  const dir = await mkdtemp(join(tmpdir(), 'kimi-ntfy-tail-'));
+  const wireDir = join(dir, 'agents', 'main');
+  try {
+    await mkdir(wireDir, { recursive: true });
+    const fakeLines = [];
+    for (let i = 0; i < 30000; i++) {
+      fakeLines.push(JSON.stringify({ event: { type: 'tool.call', toolCall: { name: 'Bash' } } }));
+    }
+    const body = `${fakeLines.join('\n')}\n`; // ~2.0 MB
+    await writeFile(join(wireDir, 'wire.jsonl'), body);
+    const stat1 = await stat(join(wireDir, 'wire.jsonl'));
+    assert.ok(stat1.size > 1_000_000, `wire should be > 1 MB; got ${stat1.size}`);
+
+    const startNs = process.hrtime.bigint();
+    const v = await verifySettledStop(dir, { settleAttempts: 0 });
+    const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+
+    assert.equal(v.settled, false, '30k pending tool.calls must look busy');
+    assert.ok(v.pendingToolCalls > 0);
+    // Soft timing ceiling: 200ms is well above tail-only read time on
+    // any reasonable disk; full read of 2 MB is consistently slower.
+    assert.ok(elapsedMs < 200, `verifySettledStop took ${elapsedMs}ms; expected tail-only`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Surface JSON parse errors from readConfig — verifiable via a tampered
+// config file (invalid JSON) at the default path.
+// ---------------------------------------------------------------------------
+
+test('handler logs a config error event when config JSON is malformed', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  const logFile = join(home, 'kimi-ntfy.jsonl');
+  try {
+    // Tamper: write invalid JSON so JSON.parse throws.
+    await writeFile(join(home, 'kimi-ntfy-config.json'), '{ "topic": "kimiCode",\n  "broken":\n', {
+      mode: 0o600,
+    });
+    const r = await runNotifyWithEnv(home, JSON.stringify(payloads.stop), {
+      ...process.env,
+      KIMI_CODE_HOME: home,
+      KIMI_NTFY_LOG: logFile,
+    });
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0, 'malformed config should silence Stop');
+    const events = (await readFile(logFile, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const bad = events.find((e) => e.event === 'config' && e.status === 'invalid_parse');
+    assert.ok(bad, `expected an invalid_parse config event, got ${JSON.stringify(events)}`);
+    assert.equal(bad.level, 'error');
+    assert.match(bad.error_message, /JSON|parse|Unexpected/);
   } finally {
     await mock.close().catch(() => {});
     await rm(home, { recursive: true, force: true });

@@ -359,6 +359,23 @@ test('cli path prints the config path', async () => {
   }
 });
 
+test('cli version prints "kimi-ntfy <semver>" with the package.json version', async () => {
+  const home = await tmpHome('version');
+  try {
+    // Read the version out of the real package.json so this test is
+    // robust against future bumps.
+    const { readFile: rf } = await import('node:fs/promises');
+    const pkg = JSON.parse(await rf(join(HERE, '..', 'package.json'), 'utf8'));
+    for (const flag of ['version', '--version', '-v']) {
+      const r = await runCli(home, flag);
+      assert.equal(r.status, 0, `flag=${flag} exit=${r.status}, stderr=${r.stderr}`);
+      assert.equal(r.stdout.trim(), `kimi-ntfy ${pkg.version}`, `flag=${flag} got ${r.stdout}`);
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('cli status prints the current config', async () => {
   const home = await tmpHome('status');
   try {
