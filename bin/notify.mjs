@@ -415,6 +415,22 @@ function buildNotification(event, payload, config, sessionDir) {
         actions,
       };
     }
+    case 'TaskStarted': {
+      // The matcher in kimi.plugin.json restricts this hook to kind=question,
+      // but defend against a future matcher change leaking other task kinds.
+      const taskKind = payload.task?.kind ?? payload.task_kind;
+      if (taskKind !== 'question') {
+        return null;
+      }
+      const questionText = (payload.description || '').trim() || 'Kimi is asking for input.';
+      return {
+        title: s.questionTitle(project),
+        message: s.questionBody(payload.cwd || '?', questionText, sessionTitle, resumeCmd),
+        tags: s.tags.question,
+        priority: s.priority.question,
+        actions,
+      };
+    }
     default:
       return null;
   }
@@ -641,6 +657,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     // Toggle de aprobación/permiso: si está apagado y el evento es PermissionRequest, salir silencioso.
     if (event === 'PermissionRequest' && !cfgField(config, 'notifyApproval', true)) {
       logEvent('info', 'filter', { reason: 'notifyApproval', hook_event: event });
+      logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
+      process.exit(0);
+    }
+
+    // Toggle de preguntas (AskUserQuestion / TaskStarted kind=question): si está apagado, salir silencioso.
+    if (event === 'TaskStarted' && !cfgField(config, 'notifyQuestion', true)) {
+      logEvent('info', 'filter', { reason: 'notifyQuestion', hook_event: event });
       logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
       process.exit(0);
     }

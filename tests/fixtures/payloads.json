@@ -36,5 +36,23 @@
     "cwd": "/home/wolf/projects/app",
     "tool_name": "run_command",
     "action": "npm run build"
+  },
+  "taskStartedQuestion": {
+    "hook_event_name": "TaskStarted",
+    "session_id": "01HZTESTQUESTION",
+    "session_title": "Pick the icon",
+    "client_type": "kimi_code_cli",
+    "cwd": "/home/wolf/projects/app",
+    "task": { "kind": "question", "task_id": "tq_1", "detached": false },
+    "description": "Which icon should we use for the success state?"
+  },
+  "taskStartedAgent": {
+    "hook_event_name": "TaskStarted",
+    "session_id": "01HZTESTTASKAGENT",
+    "session_title": "Background exploration",
+    "client_type": "kimi_code_cli",
+    "cwd": "/home/wolf/projects/app",
+    "task": { "kind": "agent", "task_id": "ta_1", "detached": false },
+    "description": "explore the repo"
   }
 }

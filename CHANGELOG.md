@@ -2,6 +2,45 @@
 
 All notable changes to kimi-ntfy are documented in this file.
 
+## [0.8.0] - 2026-08-26
+
+### Added
+- New hook for `TaskStarted` with matcher `question`. Fires when the agent
+  uses `AskUserQuestion` and pauses the turn to wait for input, so the
+  user gets a push and can come back to answer.
+- New `[question] <project>` notification format. Body mirrors
+  `PermissionRequest`:
+  ```
+  📁 {cwd}
+  💬 {session_title}
+
+  ❓ {description}
+
+  🔗 kimi --session {session_id}
+  ```
+  Tags: `question, bell`. Priority: `5` (urgent) — the user is blocked
+  waiting for input.
+- New `notifyQuestion` config field (default `true`). When `false`, the
+  handler silences every `TaskStarted` (`[question]`) push, parallel to
+  `notifyApproval` / `notifySessionEnd`.
+- New `/kimi-ntfy:question <on|off>` slash command and CLI subcommand
+  `kimi-ntfy-cli question <on|off>` that toggle the flag. Aliases
+  `questions`, `asks`, `ask` are accepted.
+- Defensive guard: a `TaskStarted` whose `task.kind` is not `question`
+  exits with `path: unknown_event` instead of leaking a non-question push
+  to ntfy. The matcher in `kimi.plugin.json` already filters at the
+  source; the guard catches a future matcher change.
+
+### Changed
+- `bin/i18n.mjs` gains `questionTitle` / `questionBody`,
+  `tags.question`, `priority.question`, and `questionOn` / `questionOff`
+  CLI feedback strings in both English and Spanish.
+- `cmdSetup` seeds `notifyQuestion: true` so a fresh install lands with
+  the field present.
+- Version bumped to `0.8.0` (minor: new feature, default-on but
+  backward-compatible — the toggle can silence it; the
+  matcher-restricted hook means no existing event delivery changes).
+
 ## [0.7.0] - 2026-08-26
 
 ### Added

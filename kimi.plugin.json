@@ -1,7 +1,7 @@
 {
   "name": "kimi-ntfy",
-  "version": "0.7.0",
-  "description": "Push notifications via ntfy.sh when a Kimi Code session, turn or sub-agent ends. English by default; Spanish optional. Self-hosted server supported.",
+  "version": "0.8.0",
+  "description": "Push notifications via ntfy.sh when a Kimi Code session, turn, sub-agent ends, or the agent asks a question. English by default; Spanish optional. Self-hosted server supported.",
   "keywords": ["notification", "ntfy", "push", "hook", "i18n"],
   "author": "Israel Roldan",
   "license": "AGPL-3.0",
@@ -23,6 +23,7 @@
     "./commands/session.md",
     "./commands/approval.md",
     "./commands/turnend.md",
+    "./commands/question.md",
     "./commands/priority.md"
   ],
   "hooks": [
@@ -53,6 +54,12 @@
     {
       "event": "SubagentStop",
       "matcher": "",
+      "command": "node ./bin/notify.mjs",
+      "timeout": 5
+    },
+    {
+      "event": "TaskStarted",
+      "matcher": "question",
       "command": "node ./bin/notify.mjs",
       "timeout": 5
     }

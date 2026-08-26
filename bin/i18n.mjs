@@ -24,6 +24,8 @@ export const STRINGS = {
     approvalOff: 'approval notifications disabled',
     turnEndOn: 'turn-end notifications enabled',
     turnEndOff: 'turn-end notifications disabled',
+    questionOn: 'question notifications enabled',
+    questionOff: 'question notifications disabled',
     priorityChanged: 'Priority set to',
     priorityReset: 'Priority override removed (reverted to per-event defaults)',
     priorityInvalid: 'invalid priority (use "min", "low", "default", "high", "urgent", or "reset")',
@@ -56,6 +58,9 @@ export const STRINGS = {
     subagentStopTitle: (project, agent) => `[sub-agent] ${project} ${agent}`,
     subagentStopBody: (cwd, agent, title, resume, text) =>
       `📁 ${cwd}\n💬 ${title}\n\n📢 Sub-agent \`${agent}\` finished.\n${text ? `\n📝 ${text}\n\n` : '\n'}🔗 ${resume}`,
+    questionTitle: (project) => `[question] ${project}`,
+    questionBody: (cwd, action, title, resume) =>
+      `📁 ${cwd}\n${title ? `💬 ${title}\n\n` : '\n'}❓ ${action}\n\n🔗 ${resume}`,
 
     // Tags and priorities are language-agnostic, but kept here for symmetry
     tags: {
@@ -64,6 +69,7 @@ export const STRINGS = {
       permission: ['hand', 'warning'],
       sessionEnd: ['wave', 'robot'],
       subagentStop: ['link', 'robot'],
+      question: ['question', 'bell'],
     },
     priority: {
       stop: 5,
@@ -71,6 +77,7 @@ export const STRINGS = {
       permission: 5,
       sessionEnd: 2,
       subagentStop: 1,
+      question: 5,
     },
 
     // stderr from the handler
@@ -99,6 +106,8 @@ export const STRINGS = {
     approvalOff: 'notificaciones de aprobación desactivadas',
     turnEndOn: 'notificaciones de fin de turno activadas',
     turnEndOff: 'notificaciones de fin de turno desactivadas',
+    questionOn: 'notificaciones de preguntas activadas',
+    questionOff: 'notificaciones de preguntas desactivadas',
     priorityChanged: 'Prioridad cambiada a',
     priorityReset: 'Prioridad personalizada eliminada (restablecida a valores por evento)',
     priorityInvalid: 'prioridad inválida (use "min", "low", "default", "high", "urgent" o "reset")',
@@ -130,6 +139,9 @@ export const STRINGS = {
     subagentStopTitle: (project, agent) => `[sub-agente] ${project} ${agent}`,
     subagentStopBody: (cwd, agent, title, resume, text) =>
       `📁 ${cwd}\n💬 ${title}\n\n📢 Sub-agente \`${agent}\` terminó.\n${text ? `\n📝 ${text}\n\n` : '\n'}🔗 ${resume}`,
+    questionTitle: (project) => `[pregunta] ${project}`,
+    questionBody: (cwd, action, title, resume) =>
+      `📁 ${cwd}\n${title ? `💬 ${title}\n\n` : '\n'}❓ ${action}\n\n🔗 ${resume}`,
 
     tags: {
       stop: ['white_check_mark', 'robot'],
@@ -137,6 +149,7 @@ export const STRINGS = {
       permission: ['hand', 'warning'],
       sessionEnd: ['wave', 'robot'],
       subagentStop: ['link', 'robot'],
+      question: ['question', 'bell'],
     },
     priority: {
       stop: 5,
@@ -144,6 +157,7 @@ export const STRINGS = {
       permission: 5,
       sessionEnd: 2,
       subagentStop: 1,
+      question: 5,
     },
 
     noConfigStderr: '[kimi-ntfy] sin config: ejecuta /kimi-ntfy:setup <topic> primero',

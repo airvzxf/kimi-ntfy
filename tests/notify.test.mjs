@@ -272,6 +272,61 @@ test('SubagentStop posts and the body mentions the agent name when enabled', asy
   }
 });
 
+test('TaskStarted with kind=question posts with priority 5 and tag "question"', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url });
+    const r = await runNotify(home, JSON.stringify(payloads.taskStartedQuestion));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    const rec = mock.records[0];
+    assert.equal(rec.headers.priority, '5');
+    assert.ok(rec.headers.tags.includes('question'), `tags were ${rec.headers.tags}`);
+    assert.ok(
+      rec.body.includes('Which icon should we use for the success state?'),
+      `body was ${rec.body}`,
+    );
+    assert.ok(rec.body.includes('📁'), `body was ${rec.body}`);
+    assert.ok(rec.body.includes('❓'), `body was ${rec.body}`);
+    assert.ok(rec.body.includes('🔗'), `body was ${rec.body}`);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('TaskStarted with kind=question is silenced when notifyQuestion is false', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url, notifyQuestion: false });
+    const r = await runNotify(home, JSON.stringify(payloads.taskStartedQuestion));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 0);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('TaskStarted with non-question kind does not post (defensive guard)', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url });
+    const r = await runNotify(home, JSON.stringify(payloads.taskStartedAgent));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    // A non-question TaskStarted must NOT produce a notification; the matcher
+    // already filters at the source, but if a future matcher change leaks
+    // other task kinds through, the handler must still drop them.
+    assert.equal(mock.records.length, 0);
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('Stop is silenced when main agent wire has tool calls in progress', async () => {
   const { mkdir, writeFile } = await import('node:fs/promises');
   const mock = await start();
