@@ -37,22 +37,61 @@
     "tool_name": "run_command",
     "action": "npm run build"
   },
-  "taskStartedQuestion": {
-    "hook_event_name": "TaskStarted",
+  "preToolUseAskUserQuestion": {
+    "hook_event_name": "PreToolUse",
     "session_id": "01HZTESTQUESTION",
     "session_title": "Pick the icon",
     "client_type": "kimi_code_cli",
     "cwd": "/home/wolf/projects/app",
-    "task": { "kind": "question", "task_id": "tq_1", "detached": false },
-    "description": "Which icon should we use for the success state?"
+    "tool_name": "AskUserQuestion",
+    "tool_input": {
+      "questions": [
+        {
+          "question": "Which icon should we use for the success state?",
+          "options": [
+            { "label": "Check", "description": "Classic green check." },
+            { "label": "Star", "description": "Filled gold star." }
+          ],
+          "multiSelect": false
+        }
+      ]
+    }
   },
-  "taskStartedAgent": {
-    "hook_event_name": "TaskStarted",
-    "session_id": "01HZTESTTASKAGENT",
-    "session_title": "Background exploration",
+  "preToolUseAskUserQuestionMulti": {
+    "hook_event_name": "PreToolUse",
+    "session_id": "01HZTESTQUESTIONMULTI",
+    "session_title": "Pick icon + theme",
     "client_type": "kimi_code_cli",
     "cwd": "/home/wolf/projects/app",
-    "task": { "kind": "agent", "task_id": "ta_1", "detached": false },
-    "description": "explore the repo"
+    "tool_name": "AskUserQuestion",
+    "tool_input": {
+      "questions": [
+        {
+          "question": "Which icon should we use for the success state?",
+          "options": [
+            { "label": "Check", "description": "Classic green check." },
+            { "label": "Star", "description": "Filled gold star." }
+          ],
+          "multiSelect": false
+        },
+        {
+          "question": "Which color palette do you prefer?",
+          "options": [
+            { "label": "Light", "description": "Light background, dark text." },
+            { "label": "Dark", "description": "Dark background, light text." }
+          ],
+          "multiSelect": false
+        }
+      ]
+    }
+  },
+  "preToolUseOtherTool": {
+    "hook_event_name": "PreToolUse",
+    "session_id": "01HZTESTOTHERTOOL",
+    "session_title": "Edit a file",
+    "client_type": "kimi_code_cli",
+    "cwd": "/home/wolf/projects/app",
+    "tool_name": "Edit",
+    "tool_input": { "file_path": "/home/wolf/projects/app/README.md" }
   }
 }

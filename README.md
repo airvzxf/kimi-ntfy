@@ -78,7 +78,7 @@ The plugin reads and writes `~/.kimi-code/kimi-ntfy-config.json` (mode `0600`):
 | `notifySessionEnd` | `true` | If `false`, silences notifications on `SessionEnd` (`[closed]`). |
 | `notifyApproval` | `true` | If `true`, fires on `PermissionRequest` (`[approval]`). |
 | `notifyTurnEnd` | `true` | If `false`, silences every `Stop` push (eliminates the duplicate notification Kimi Code fires when a sub-agent finishes its turn — the `Stop` arrives with the main session's metadata and no `agent_name`, so the previous `notifySubagent`-only filter cannot catch it). Set this to `false` when you run long sub-agent chains. |
-| `notifyQuestion` | `true` | If `false`, silences notifications on `TaskStarted` with `kind=question` (`[question]`), which fires when the agent uses `AskUserQuestion` and pauses the turn to wait for input. |
+| `notifyQuestion` | `true` | If `false`, silences notifications on `PreToolUse` for `AskUserQuestion` (`[question]`). The hook fires every time the agent invokes `AskUserQuestion`, foreground or background, before the turn pauses for input. |
 | `priority` | (unset) | Optional ntfy priority override that wins over every per-event default. See [Priority levels](#priority-levels). |
 
 ## Priority levels
@@ -93,7 +93,7 @@ being noisy:
 | `PermissionRequest` | `urgent` (5) | Long burst + pop-over — Kimi needs approval/input. |
 | `SessionEnd` | `low` (2) | Silent — confirmed the session closed. |
 | `SubagentStop` | `min` (1) | Silent — only meaningful when `notifySubagent` is on. |
-| `TaskStarted` (kind=`question`) | `urgent` (5) | Long burst + pop-over — Kimi paused the turn to ask you something. |
+| `PreToolUse` (tool=`AskUserQuestion`) | `urgent` (5) | Long burst + pop-over — Kimi is about to ask you something. |
 
 Use `/kimi-ntfy:priority <level>` to override every event with one of the
 five ntfy levels (aliases in parentheses):
@@ -155,7 +155,7 @@ and POSTs to the configured topic.
 | `SessionEnd` | `<project> - session closed` | `wave, robot` | 2 (low) | on (toggle `notifySessionEnd`) |
 | `SubagentStop` | `<project> - sub-agent <name> done` | `link, robot` | 1 (min) | off (toggle `notifySubagent`) |
 | `PermissionRequest` | `<project> - approval` | `hand, warning` | 5 (urgent) | on (toggle `notifyApproval`) |
-| `TaskStarted` (kind=`question`) | `<project> - question` | `question, bell` | 5 (urgent) | on (toggle `notifyQuestion`) |
+| `PreToolUse` (tool=`AskUserQuestion`) | `<project> - question` | `question, bell` | 5 (urgent) | on (toggle `notifyQuestion`) |
 
 Every notification includes:
 
@@ -360,7 +360,7 @@ El plugin lee y escribe `~/.kimi-code/kimi-ntfy-config.json` (permisos `0600`):
 | `notifySessionEnd` | `true` | Si es `false`, silencia notificaciones en `SessionEnd` (`[cerrada]`). |
 | `notifyApproval` | `true` | Si es `true`, dispara en `PermissionRequest` (`[aprobación]`). |
 | `notifyTurnEnd` | `true` | Si es `false`, silencia todos los `Stop` (útil en cadenas largas de sub-agentes). |
-| `notifyQuestion` | `true` | Si es `false`, silencia notificaciones en `TaskStarted` con `kind=question` (`[pregunta]`, disparado cuando el agente usa `AskUserQuestion`). |
+| `notifyQuestion` | `true` | Si es `false`, silencia notificaciones en `PreToolUse` para `AskUserQuestion` (`[pregunta]`). El hook dispara cada vez que el agente invoca `AskUserQuestion`, sea foreground o background, antes de que el turno quede pausado. |
 | `priority` | (sin definir) | Sobrescritura opcional de prioridad que prevalece sobre los valores por evento. |
 
 Para cambiar el idioma después de la instalación:

@@ -2,6 +2,31 @@
 
 All notable changes to kimi-ntfy are documented in this file.
 
+## [0.8.1] - 2026-08-27
+
+### Fixed
+- Question notifications (`[question]`) now fire for foreground
+  `AskUserQuestion` calls. The previous hook (`TaskStarted` with matcher
+  `question`) was dead code for the common case — Kimi Code only emits
+  `TaskStarted` for background tasks (kinds `agent`, `process`,
+  `question`), and the LLM almost never calls `AskUserQuestion` with
+  `background: true`. Replaced the hook with `PreToolUse` matcher
+  `AskUserQuestion`, which fires every time the agent is about to ask,
+  before the turn pauses for input.
+- The body for multi-question prompts now includes a `(N questions)`
+  suffix when more than one question is asked in a single call.
+- Defensive guard inside the handler still drops the notification when
+  `payload.tool_name !== 'AskUserQuestion'`, so a future matcher change
+  in `kimi.plugin.json` cannot leak other `PreToolUse` events through.
+- `scripts/validate-manifest.mjs` allowlist updated from `TaskStarted` to
+  `PreToolUse` so `npm run validate` stays green.
+
+### Changed
+- Hook event switched from `TaskStarted` (matcher `question`) to
+  `PreToolUse` (matcher `AskUserQuestion`). Default `notifyQuestion`
+  behaviour is unchanged: still on, still toggleable with
+  `/kimi-ntfy:question <on|off>`.
+
 ## [0.8.0] - 2026-08-26
 
 ### Added

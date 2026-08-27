@@ -1,6 +1,6 @@
 {
   "name": "kimi-ntfy",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Push notifications via ntfy.sh when a Kimi Code session, turn, sub-agent ends, or the agent asks a question. English by default; Spanish optional. Self-hosted server supported.",
   "keywords": ["notification", "ntfy", "push", "hook", "i18n"],
   "author": "Israel Roldan",
@@ -58,8 +58,8 @@
       "timeout": 5
     },
     {
-      "event": "TaskStarted",
-      "matcher": "question",
+      "event": "PreToolUse",
+      "matcher": "AskUserQuestion",
       "command": "node ./bin/notify.mjs",
       "timeout": 5
     }
