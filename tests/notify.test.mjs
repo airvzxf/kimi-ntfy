@@ -272,12 +272,12 @@ test('SubagentStop posts and the body mentions the agent name when enabled', asy
   }
 });
 
-test('TaskStarted with kind=question posts with priority 5 and tag "question"', async () => {
+test('PreToolUse with AskUserQuestion posts with priority 5 and tag "question"', async () => {
   const mock = await start();
   const home = await tmpHome();
   try {
     await seed(home, { topic: 'mytopic', server: mock.url });
-    const r = await runNotify(home, JSON.stringify(payloads.taskStartedQuestion));
+    const r = await runNotify(home, JSON.stringify(payloads.preToolUseAskUserQuestion));
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 1);
     const rec = mock.records[0];
@@ -296,12 +296,31 @@ test('TaskStarted with kind=question posts with priority 5 and tag "question"', 
   }
 });
 
-test('TaskStarted with kind=question is silenced when notifyQuestion is false', async () => {
+test('PreToolUse with AskUserQuestion appends "(N questions)" suffix when multiple questions', async () => {
+  const mock = await start();
+  const home = await tmpHome();
+  try {
+    await seed(home, { topic: 'mytopic', server: mock.url });
+    const r = await runNotify(home, JSON.stringify(payloads.preToolUseAskUserQuestionMulti));
+    assert.equal(r.code, 0, `stderr=${r.stderr}`);
+    assert.equal(mock.records.length, 1);
+    const rec = mock.records[0];
+    assert.ok(
+      rec.body.includes('Which icon should we use for the success state? (2 questions)'),
+      `body was ${rec.body}`,
+    );
+  } finally {
+    await mock.close().catch(() => {});
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('PreToolUse with AskUserQuestion is silenced when notifyQuestion is false', async () => {
   const mock = await start();
   const home = await tmpHome();
   try {
     await seed(home, { topic: 'mytopic', server: mock.url, notifyQuestion: false });
-    const r = await runNotify(home, JSON.stringify(payloads.taskStartedQuestion));
+    const r = await runNotify(home, JSON.stringify(payloads.preToolUseAskUserQuestion));
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
     assert.equal(mock.records.length, 0);
   } finally {
@@ -310,16 +329,16 @@ test('TaskStarted with kind=question is silenced when notifyQuestion is false', 
   }
 });
 
-test('TaskStarted with non-question kind does not post (defensive guard)', async () => {
+test('PreToolUse with non-AskUserQuestion tool does not post (defensive guard)', async () => {
   const mock = await start();
   const home = await tmpHome();
   try {
     await seed(home, { topic: 'mytopic', server: mock.url });
-    const r = await runNotify(home, JSON.stringify(payloads.taskStartedAgent));
+    const r = await runNotify(home, JSON.stringify(payloads.preToolUseOtherTool));
     assert.equal(r.code, 0, `stderr=${r.stderr}`);
-    // A non-question TaskStarted must NOT produce a notification; the matcher
-    // already filters at the source, but if a future matcher change leaks
-    // other task kinds through, the handler must still drop them.
+    // The matcher in kimi.plugin.json restricts PreToolUse to AskUserQuestion, but
+    // if a future matcher change leaks other tools through, the handler must
+    // still drop them.
     assert.equal(mock.records.length, 0);
   } finally {
     await mock.close().catch(() => {});

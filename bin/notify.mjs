@@ -415,14 +415,18 @@ function buildNotification(event, payload, config, sessionDir) {
         actions,
       };
     }
-    case 'TaskStarted': {
-      // The matcher in kimi.plugin.json restricts this hook to kind=question,
-      // but defend against a future matcher change leaking other task kinds.
-      const taskKind = payload.task?.kind ?? payload.task_kind;
-      if (taskKind !== 'question') {
+    case 'PreToolUse': {
+      // The matcher in kimi.plugin.json restricts this hook to the
+      // AskUserQuestion tool, but defend against a matcher change leaking
+      // other tools through.
+      if (payload.tool_name !== 'AskUserQuestion') {
         return null;
       }
-      const questionText = (payload.description || '').trim() || 'Kimi is asking for input.';
+      const input = payload.tool_input ?? {};
+      const questions = Array.isArray(input.questions) ? input.questions : [];
+      const firstText = (questions[0]?.question ?? '').trim();
+      const countSuffix = questions.length > 1 ? ` (${questions.length} questions)` : '';
+      const questionText = firstText ? `${firstText}${countSuffix}` : 'Kimi is asking for input.';
       return {
         title: s.questionTitle(project),
         message: s.questionBody(payload.cwd || '?', questionText, sessionTitle, resumeCmd),
@@ -661,8 +665,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exit(0);
     }
 
-    // Toggle de preguntas (AskUserQuestion / TaskStarted kind=question): si está apagado, salir silencioso.
-    if (event === 'TaskStarted' && !cfgField(config, 'notifyQuestion', true)) {
+    // Toggle de preguntas (AskUserQuestion via PreToolUse): si está apagado, salir silencioso.
+    // The matcher in kimi.plugin.json restricts PreToolUse to AskUserQuestion, but we
+    // also confirm tool_name here so a future matcher change doesn't leak other tools.
+    if (
+      event === 'PreToolUse' &&
+      payload.tool_name === 'AskUserQuestion' &&
+      !cfgField(config, 'notifyQuestion', true)
+    ) {
       logEvent('info', 'filter', { reason: 'notifyQuestion', hook_event: event });
       logEvent('info', 'exit', { code: 0, path: 'filter_silenced' });
       process.exit(0);
